@@ -25,7 +25,7 @@ export default function DemoTour() {
   const [states, setStates] = useState<Record<string, StageState>>({});
   const [evidence, setEvidence] = useState<Record<string, Evidence>>({});
   const [current, setCurrent] = useState<number>(0);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string[]>([]);
 
   async function startDemo() {
     setSigningIn(true);
@@ -54,7 +54,8 @@ export default function DemoTour() {
 
   async function runStage(stage: TourStage) {
     setCurrent(stage.n);
-    setExpanded(stage.id);
+    // Open the new stage without closing ones the reader is still viewing.
+    setExpanded((e) => (e.includes(stage.id) ? e : [...e, stage.id]));
     setStates((s) => ({ ...s, [stage.id]: "running" }));
     try {
       const res = await fetch("/api/demo", {
@@ -133,7 +134,7 @@ export default function DemoTour() {
           {stages.map((stage) => {
             const st = states[stage.id] ?? "pending";
             const ev = evidence[stage.id];
-            const isExpanded = expanded === stage.id;
+            const isExpanded = expanded.includes(stage.id);
             return (
               <div
                 key={stage.id}
@@ -149,7 +150,11 @@ export default function DemoTour() {
               >
                 <button
                   className="flex w-full items-center gap-3 text-left"
-                  onClick={() => setExpanded(isExpanded ? null : stage.id)}
+                  onClick={() =>
+                    setExpanded((e) =>
+                      e.includes(stage.id) ? e.filter((x) => x !== stage.id) : [...e, stage.id]
+                    )
+                  }
                 >
                   <span
                     className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
