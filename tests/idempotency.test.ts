@@ -1,13 +1,29 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { randomUUID } from "crypto";
-import { withIdempotency, getCompleted, IdempotencyConflictError } from "../src/modules/llm/idempotency";
+import type { FakeDbState } from "./helpers/fake-db";
 
-// DB is the real Neon Postgres (DATABASE_URL from .env.local via vitest setup).
-// Isolation is provided by unique (scope, key) pairs — a random run prefix
-// keeps concurrent CI runs from colliding. No live X API / OpenRouter calls.
+// DB-backed module under test runs against the shared in-memory fake —
+// zero live database, never prod. (vi.mock is hoisted above the const, so
+// the state must be created inside vi.hoisted.)
+const { state } = vi.hoisted(() => ({ state: {} as FakeDbState }));
+vi.mock("../src/db", async () => {
+  const { makeDbMock } = await import("./helpers/fake-db");
+  return makeDbMock(state);
+});
+
+import {
+  withIdempotency,
+  getCompleted,
+  IdempotencyConflictError,
+} from "../src/modules/llm/idempotency";
+
 const runId = randomUUID().slice(0, 8);
 
 describe("withIdempotency", () => {
+  beforeEach(() => {
+    for (const k of Object.keys(state)) delete state[k];
+  });
+
   it("executes once and caches the result", async () => {
     const scope = `${runId}-scope1`;
     let calls = 0;
@@ -60,5 +76,32 @@ describe("withIdempotency", () => {
     await withIdempotency(scope, "k", async () => ({ x: 42 }));
     expect(await getCompleted<{ x: number }>(scope, "k")).toEqual({ x: 42 });
     expect(await getCompleted(scope, "missing")).toBeNull();
+  });
+
+  it("TOCTOU: a concurrent second caller cannot overwrite the in_progress row (DB-level claim)", async () => {
+    const scope = `${runId}-race`;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = async () => {
+      await gate;
+      return "first";
+    };
+    const p1 = withIdempotency(scope, "race", slow);
+    await new Promise((r) => setTimeout(r, 5));
+    // Second caller with the same key: must conflict, not execute.
+    let calls = 0;
+    await expect(
+      withIdempotency(scope, "race", async () => {
+        calls++;
+        return "second";
+      })
+    ).rejects.toBeInstanceOf(IdempotencyConflictError);
+    expect(calls).toBe(0);
+    release();
+    await expect(p1).resolves.toMatchObject({ value: "first" });
+    // The row must record exactly one completed execution.
+    const row = state["idempotency_keys"]?.[0];
+    expect(row).toMatchObject({ scope, status: "completed" });
+    expect(state["idempotency_keys"]).toHaveLength(1);
   });
 });

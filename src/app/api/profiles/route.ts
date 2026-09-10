@@ -91,8 +91,11 @@ export async function POST(req: NextRequest) {
           idemKey,
           run
         );
+        // Guard against a completed row with a null result (e.g. run()
+        // returned undefined): JSON.parse(null) would throw and 500.
+        const replayedValue = value ?? (record?.result ? JSON.parse(record.result) : undefined);
         return respond(
-          (value ?? JSON.parse(record!.result!)) as { profileId: string; sampleCount: number },
+          replayedValue as { profileId: string; sampleCount: number },
           !!record
         );
       } catch (err) {

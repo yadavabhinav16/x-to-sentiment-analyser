@@ -11,8 +11,14 @@ import { logger } from "../../lib/logger";
  * (scope, key) return the cached result without re-executing. Failures are
  * recorded and may be retried.
  *
- * The (scope, key) primary key in idempotency_keys is the durable backstop;
- * an in-process map guards against duplicate concurrent execution.
+ * Concurrency safety (TOCTOU): the lock is acquired by an INSERT with
+ * ON CONFLICT DO NOTHING, and ownership is decided by the affected row
+ * count — exactly one concurrent caller wins the insert. There is no
+ * check-then-act window: a second caller can never overwrite the winner's
+ * in_progress row (the previous onConflictDoUpdate allowed exactly that,
+ * causing duplicate LLM execution). The in-process Set is only a fast-path
+ * guard for same-instance duplicates; the DB constraint is the durable
+ * backstop across instances.
  */
 
 export interface IdempotencyRow {
@@ -62,17 +68,44 @@ export async function withIdempotency<T>(
   if (existing?.status === "in_progress" || inFlight.has(lockId)) {
     throw new IdempotencyConflictError(scope, key);
   }
-  if (inFlight.has(lockId)) throw new IdempotencyConflictError(scope, key);
-  inFlight.add(lockId);
+  // A failed row from a previous run is reclaimable: delete it so the
+  // insert-if-absent claim below can win.
+  if (existing?.status === "failed") {
+    await getDb()
+      .delete(idempotencyKeys)
+      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
+  }
 
+  // Atomically claim the key: insert-if-absent. affected rows = 0 means a
+  // concurrent caller holds the in_progress row (or completed it between our
+  // read and now) — re-read and replay/conflict accordingly.
+  inFlight.add(lockId);
   const now = new Date();
   const db = getDb();
-  await db.insert(idempotencyKeys)
-    .values({ scope, key, status: "in_progress", createdAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: [idempotencyKeys.scope, idempotencyKeys.key],
-      set: { status: "in_progress", error: null, result: null, updatedAt: now },
-    });
+  let claimed = false;
+  try {
+    const inserted = await db
+      .insert(idempotencyKeys)
+      .values({ scope, key, status: "in_progress", createdAt: now, updatedAt: now })
+      .onConflictDoNothing({ target: [idempotencyKeys.scope, idempotencyKeys.key] })
+      .returning({ scope: idempotencyKeys.scope });
+    claimed = inserted.length > 0;
+  } finally {
+    if (!claimed) inFlight.delete(lockId);
+  }
+
+  if (!claimed) {
+    // Lost the race: re-read to distinguish "replay a freshly completed
+    // result" from "still in progress → conflict".
+    const raced = await row(scope, key);
+    if (raced?.status === "completed") {
+      return {
+        record: raced,
+        value: raced.result !== null ? JSON.parse(raced.result) : undefined,
+      };
+    }
+    throw new IdempotencyConflictError(scope, key);
+  }
 
   try {
     const value = await fn();
@@ -81,6 +114,7 @@ export async function withIdempotency<T>(
       .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
     return { record: null, value };
   } catch (err) {
+    logger.warn("Idempotent operation failed", { scope, key, error: String(err) });
     await db.update(idempotencyKeys)
       .set({ status: "failed", error: String(err), updatedAt: new Date() })
       .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
@@ -96,5 +130,3 @@ export async function getCompleted<T>(scope: string, key: string): Promise<T | n
   if (!r || r.status !== "completed" || r.result === null) return null;
   return JSON.parse(r.result) as T;
 }
-
-void logger;

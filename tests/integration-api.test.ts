@@ -8,10 +8,19 @@
 import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-// DB is the real Neon Postgres (DATABASE_URL from .env.local via setup-env).
+// DB is an in-memory fake (tests/helpers/fake-db.ts) — the suite NEVER touches
+// a real database. The real DATABASE_URL is stripped in tests/setup-env.ts.
 // No live X API and no live OpenRouter calls below.
 
 const testUser = { id: "user-test-1", email: "int-test@example.com", name: "Int Test" };
+
+// 1. Mock the DB module with the in-memory fake BEFORE importing route modules.
+// (vi.mock is hoisted above the const — use vi.hoisted so dbState exists first.)
+const { dbState } = vi.hoisted(() => ({ dbState: {} as Record<string, Array<Record<string, unknown>>> }));
+vi.mock("@/db", async () => {
+  const { makeDbMock } = await import("./helpers/fake-db");
+  return makeDbMock(dbState);
+});
 
 // 2. Mock auth entirely (avoid loading next-auth → next/server ESM interop issue in vitest).
 vi.mock("@/modules/auth/auth", () => ({
@@ -66,10 +75,18 @@ import { drafts, voiceProfiles, users as usersTable } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { MockTweetSource } from "@/modules/ingestion/mock-tweet-source";
 
-const FIXTURES_DIR = "/Users/abhi/Desktop/okara-assessment/test-fixtures";
+// Fixtures live one level above the app package, portably resolved from this
+// test file's location (works on any machine/CI runner).
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
-// MockTweetSource defaults to cwd/../test-fixtures; the test's cwd is a temp
-// dir, so route it at the repo's fixture directory explicitly.
+const FIXTURES_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "test-fixtures"
+);
+
 vi.mock("@/modules/ingestion/mock-tweet-source", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/ingestion/mock-tweet-source")>();
   return {
