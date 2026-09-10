@@ -18,7 +18,11 @@ export class MockTweetSource implements TweetSource {
 
   constructor(fixturesDir?: string) {
     const dir =
-      fixturesDir ?? path.resolve(process.cwd(), "..", "test-fixtures");
+      fixturesDir ??
+      path.resolve(
+        process.env.TEST_FIXTURES_DIR ||
+          path.join(process.cwd(), "..", "test-fixtures")
+      );
     const userBody = JSON.parse(
       readFileSync(path.join(dir, "elonmusk-user.json"), "utf8")
     );
