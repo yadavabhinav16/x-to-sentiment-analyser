@@ -6,6 +6,7 @@ import { generationJobs } from "@/db/schema";
 import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
 import { getLlmClient } from "@/modules/llm/openrouter";
 import { buildLlmRouter } from "@/modules/llm/router";
+import { runShadowValidation } from "@/modules/llm/shadow-validator";
 import { moderateDraft } from "@/modules/voice/moderation";
 import { generateDrafts, MissingKeyError } from "@/modules/voice/generation-service";
 import { styleProfileSchema } from "@/modules/analysis/style-profile";
@@ -90,18 +91,39 @@ export async function POST(req: NextRequest) {
       // nex-n2.5-pro 3/3 valid @ 11-14s; nemotron-3-ultra 2/3; dots-3-note 1/3.
       const router = buildLlmRouter(process.env.OPENROUTER_API_KEY!);
       const outcome = await generateDrafts(router, profile, corpus, count, body.topic);
+
+      // Shadow validation ("LLM madness validator"): an independent secondary
+      // model answers Yes/No whether the primary's output was on-topic and
+      // coherent. Non-blocking: failure degrades to 'unknown', never an error.
+      const shadow = await runShadowValidation(
+        router.getProviders(),
+        body.topic
+          ? `Write ${count} short tweets in this person's voice about: ${body.topic}`
+          : `Write ${count} short tweets in this person's natural voice`,
+        outcome.drafts.map((d) => d.text),
+        outcome.provider
+      );
+
       const moderated = outcome.drafts.filter((d) => moderateDraft(d.text).allowed);
       const blockedCount = outcome.drafts.length - moderated.length;
       if (blockedCount > 0) {
         logger.warn("Drafts blocked by moderation", { jobId: job.id, blockedCount });
       }
       const rows = moderated.length ? await createDrafts(profileRow.id, job.id, moderated) : [];
-      await getDb().update(generationJobs).set({ status: "done" }).where(eq(generationJobs.id, job.id));
+      await getDb()
+        .update(generationJobs)
+        .set({
+          status: "done",
+          shadowVerdict: shadow.verdict,
+          shadowValidator: shadow.validator,
+        })
+        .where(eq(generationJobs.id, job.id));
       return NextResponse.json({
         ok: true,
         jobId: job.id,
         count: rows.length,
         blockedCount,
+        shadowValidation: { verdict: shadow.verdict, validator: shadow.validator },
         drafts: rows.map((d) => ({
           id: d.id,
           text: d.text,

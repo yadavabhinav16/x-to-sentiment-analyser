@@ -84,6 +84,10 @@ export class LlmRouter {
     throw new AllProvidersFailedError(attempts);
   }
 
+  getProviders(): Array<{ name: string; client: LlmClient }> {
+    return this.providers.map((p) => ({ name: p.name, client: p.client }));
+  }
+
   /** Health snapshot for diagnostics/tests. */
   health(): Array<{ provider: string; state: string }> {
     return this.providers.map((p) => ({

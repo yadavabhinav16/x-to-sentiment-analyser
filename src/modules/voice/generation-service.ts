@@ -12,6 +12,8 @@ export interface GenerationOutcome {
   jobId: string;
   tokensIn: number;
   tokensOut: number;
+  /** Which router provider produced the output (for shadow-validation independence). */
+  provider: string;
 }
 
 export class MissingKeyError extends Error {
@@ -87,5 +89,5 @@ export async function generateDrafts(
     tokensIn: result!.tokensIn,
     tokensOut: result!.tokensOut,
   });
-  return { drafts, jobId, tokensIn: result!.tokensIn, tokensOut: result!.tokensOut };
+  return { drafts, jobId, tokensIn: result!.tokensIn, tokensOut: result!.tokensOut, provider: (result as { provider?: string }).provider ?? "unknown" };
 }

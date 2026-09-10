@@ -87,4 +87,11 @@ export const MIGRATIONS: Array<{ id: string; sql: string }> = [
       );
     `,
   },
+  {
+    id: "2026-09-11-002-shadow-validation",
+    sql: `
+      ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS shadow_verdict TEXT;
+      ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS shadow_validator TEXT;
+    `,
+  },
 ];

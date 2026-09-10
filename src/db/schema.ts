@@ -60,6 +60,10 @@ export const generationJobs = pgTable("generation_jobs", {
   status: text("status").$type<"pending" | "running" | "done" | "failed">().notNull().default("pending"),
   error: text("error"),
   count: integer("count").notNull().default(5),
+  // shadow validation ("LLM madness validator"): independent secondary model's
+  // yes/no judgement of whether the primary's output was on-topic + coherent
+  shadowVerdict: text("shadow_verdict").$type<"yes" | "no" | "unknown">(),
+  shadowValidator: text("shadow_validator"),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
     .notNull()
     .defaultNow(),
