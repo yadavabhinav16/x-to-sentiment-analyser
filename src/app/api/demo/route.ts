@@ -5,7 +5,9 @@ import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/logger";
 import { getDb } from "@/db";
 import { voiceProfiles, tweets, drafts } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, desc } from "drizzle-orm";
+import { checkCoherence, scoreStyleDeviation } from "@/modules/analysis/coherence";
+import { evaluateDraft } from "@/modules/analysis/evaluate";
 import { MockTweetSource } from "@/modules/ingestion/mock-tweet-source";
 import { createProfileFromHandle } from "@/modules/profiles/create-service";
 import { styleProfileSchema } from "@/modules/analysis/style-profile";
@@ -21,7 +23,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const Body = z.object({
-  stage: z.enum(["auth", "ingest", "analyze", "resilience", "generate", "moderate", "persist", "done"]),
+  stage: z.enum(["auth", "ingest", "analyze", "resilience", "generate", "quality", "moderate", "shadow", "persist", "done"]),
   handle: z.string().max(30).optional(),
 });
 
@@ -206,6 +208,46 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      case "quality": {
+        const row = await getProfileByHandle(handle, user.id);
+        if (!row) {
+          return NextResponse.json({ error: "Run the ingestion stage first." }, { status: 404 });
+        }
+        const profile = parseStoredProfile(row.styleProfile);
+        const recentDrafts = await getDb()
+          .select({ text: drafts.text, styleMatch: drafts.styleMatch })
+          .from(drafts)
+          .where(eq(drafts.voiceProfileId, row.id))
+          .orderBy(desc(drafts.createdAt))
+          .limit(5);
+        const scored = recentDrafts.map((d) => {
+          const coherence = checkCoherence(d.text);
+          const gate = evaluateDraft(d.text, profile).score;
+          const deviation = scoreStyleDeviation(d.text, profile);
+          return {
+            text: d.text.slice(0, 60),
+            storedStyleMatch: d.styleMatch,
+            coherent: coherence.coherent,
+            coherenceFlags: coherence.flags,
+            profileGateScore: gate,
+            deviationScore: deviation.score,
+            deviations: deviation.deviations,
+            blendedStyleMatch: Math.round((gate + deviation.score) / 2),
+          };
+        });
+        return NextResponse.json({
+          ok: true,
+          stage,
+          evidence: {
+            coherenceChecks: ["repeated_word", "garbage_chars", "symbol_heavy", "trailing_comma", "dangling_word", "unterminated"],
+            coherencePhilosophy: "drops objectively broken model output; never flags authentic voice quirks (lowercase starts, run-ons, slang)",
+            deviationChecks: ["length distribution", "question style", "caps shouting", "topic drift", "profanity policy", "hashtag policy"],
+            scoring: "styleMatch = mean(profile gate score, distribution-aware deviation score)",
+            draftsRescored: scored,
+          },
+        });
+      }
+
       case "moderate": {
         const benign = moderateDraft(
           "Shipping the new release today. Small team, big week — feedback welcome."
@@ -226,6 +268,33 @@ export async function POST(req: NextRequest) {
             blocked: { allowed: blocked.allowed, flags: blocked.flags, reason: blocked.reason },
             storedLabelsOnDemoDrafts: stored,
             policy: "every draft labeled synthetic_content; hard categories rejected before persistence",
+          },
+        });
+      }
+
+      case "shadow": {
+        const jobRows = await getDb()
+          .select({
+            id: generationJobs.id,
+            status: generationJobs.status,
+            count: generationJobs.count,
+            shadowVerdict: generationJobs.shadowVerdict,
+            shadowValidator: generationJobs.shadowValidator,
+            createdAt: generationJobs.createdAt,
+          })
+          .from(generationJobs)
+          .where(eq(generationJobs.userId, user.id))
+          .orderBy(desc(generationJobs.createdAt))
+          .limit(3);
+        return NextResponse.json({
+          ok: true,
+          stage,
+          evidence: {
+            validatorDesign:
+              "a secondary model from the router chain (the generator model is skipped) answers one Yes/No question: was the output on-topic and coherent?",
+            nonBlocking: "validator failure/timeout (20s cap) degrades to verdict 'unknown' — it never fails the generation",
+            persistedOn: "generation_jobs.shadow_verdict + shadow_validator",
+            recentJobs: jobRows,
           },
         });
       }

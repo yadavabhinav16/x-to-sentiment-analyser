@@ -217,9 +217,9 @@ export default function DemoTour() {
           {activeStage == null && Object.values(states).every((s) => s === "done") && (
             <div className="rounded-xl border border-emerald-800 bg-emerald-950/30 p-6 text-center">
               <p className="text-sm text-emerald-300">
-                Tour complete — all 8 stages executed the real pipeline live. The demo
+                Tour complete — all 10 stages executed the real pipeline live. The demo
                 account&apos;s profile, corpus, generation jobs, and moderation-labeled
-                drafts are persisted in SQLite and visible on the dashboard.
+                drafts are persisted in Postgres and visible on the dashboard.
               </p>
               <a
                 href="/"

@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import { TOUR_STAGES, TOUR_STAGE_IDS } from "../src/modules/demo/tour";
 
 describe("guided demo tour", () => {
-  it("has 8 sequential stages numbered 1..8", () => {
-    expect(TOUR_STAGES.length).toBe(8);
-    expect(TOUR_STAGES.map((s) => s.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  it("has 10 sequential stages numbered 1..10", () => {
+    expect(TOUR_STAGES.length).toBe(10);
+    expect(TOUR_STAGES.map((s) => s.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("covers every major architectural layer", () => {
@@ -15,7 +15,9 @@ describe("guided demo tour", () => {
       "analysis",
       "resilience",
       "generation",
+      "quality",
       "moderation",
+      "shadow",
       "persistence",
     ]);
   });
@@ -37,7 +39,9 @@ describe("guided demo tour", () => {
       "analyze",
       "resilience",
       "generate",
+      "quality",
       "moderate",
+      "shadow",
       "persist",
       "done",
     ];
@@ -45,6 +49,27 @@ describe("guided demo tour", () => {
       expect(validActions, `stage ${s.id} action`).toContain(s.action);
       expect(s.liveAction.length).toBeGreaterThan(20);
       expect(s.modules.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("describes only the current architecture — no past-state or migration framing", () => {
+    const banned = [
+      /previously/i,
+      /used to/i,
+      /we moved/i,
+      /migrated? from/i,
+      /bake-?off/i,
+      /legacy/i,
+      /deprecated/i,
+      /\bnow (blends|uses|runs)\b/i,
+      /replaced/i,
+      /\bsqlite\b/i,
+    ];
+    for (const s of TOUR_STAGES) {
+      const text = [s.title, s.liveAction, ...s.decisions.map((d) => `${d.title} ${d.detail}`)].join(" ");
+      for (const re of banned) {
+        expect(text, `stage ${s.id}`).not.toMatch(re);
+      }
     }
   });
 });

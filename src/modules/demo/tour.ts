@@ -23,7 +23,9 @@ export interface TourStage {
     | "analyze"
     | "resilience"
     | "generate"
+    | "quality"
     | "moderate"
+    | "shadow"
     | "persist"
     | "done";
 }
@@ -128,7 +130,12 @@ export const TOUR_STAGES: TourStage[] = [
       {
         title: "Six focused factor modules",
         detail:
-          "Each factor is independently unit-tested (62-test suite) and independently swappable; the analyzer is a composition, not a monolith prompt.",
+          "Each factor is independently unit-tested (89-test suite) and independently swappable; the analyzer is a composition, not a monolith prompt.",
+      },
+      {
+        title: "Signature phrases must carry content",
+        detail:
+          "Bigram mining for signature phrases filters through a FUNCTION_WORDS stoplist: a candidate phrase must contain at least one content word on each side, so grammar like \"this is\" or \"want to\" — which win on raw frequency — never pollutes the identity signal.",
       },
     ],
     action: "analyze",
@@ -136,11 +143,16 @@ export const TOUR_STAGES: TourStage[] = [
   {
     id: "resilience",
     n: 5,
-    title: "LLM infrastructure — failover, circuit breakers, idempotency",
+    title: "LLM infrastructure — provider chain, failover, circuit breakers",
     liveAction:
-      "Querying the live router health: each provider runs behind its own circuit breaker. Requests fail over in priority order; a failing provider is skipped fast instead of adding latency.",
+      "Querying the live router health: the provider chain is built from the LLM_PROVIDERS env var (paid glm-5.3-flash primary, then free fallbacks), each behind its own circuit breaker. Failures fail over in priority order.",
     modules: ["modules/llm/router", "lib/circuit-breaker", "modules/llm/idempotency"],
     decisions: [
+      {
+        title: "Env-configurable provider chain",
+        detail:
+          "buildLlmRouter reads LLM_PROVIDERS (comma-separated model slugs, tried in order) and falls back to the baked-in default chain with glm-5.3-flash as the paid primary. Swapping providers is a config change, never a code change — ops can rebalance the chain without a deploy.",
+      },
       {
         title: "Priority-ordered provider failover",
         detail:
@@ -182,12 +194,43 @@ export const TOUR_STAGES: TourStage[] = [
         detail:
           "Every generation writes a generation_jobs row (running → done/failed) with tokens in/out — auditable, debuggable, and rate-limitable.",
       },
+      {
+        title: "Transient bad output is retried",
+        detail:
+          "Free models intermittently return empty or truncated JSON bodies. Generation retries up to 3 times on malformed output (the router handles provider-level failover; this handles transient bad output from a healthy provider).",
+      },
     ],
     action: "generate",
   },
   {
-    id: "moderation",
+    id: "quality",
     n: 7,
+    title: "Quality gates — coherence check + distribution-aware style scoring",
+    liveAction:
+      "Re-scoring the drafts you just generated: each one passes the deterministic coherence check (repeated words, truncation, garbage tokens) and a styleMatch that blends the profile gate with distribution-aware deviation scoring.",
+    modules: ["modules/analysis/coherence", "modules/analysis/evaluate"],
+    decisions: [
+      {
+        title: "Broken output is dropped, not scored",
+        detail:
+          "checkCoherence() is a free, deterministic PASS-1-style check that catches objectively broken model output — doubled words, replacement/control characters, symbol-heavy text, trailing commas, dangling final words, unterminated drafts — and drops it before persistence.",
+      },
+      {
+        title: "Voice quirks are never flagged as errors",
+        detail:
+          "The coherence heuristics are tuned so authentic style — lowercase starts, run-ons, slang, short fragments — passes. It detects degradation, not idiosyncrasy, so the clone stays faithful to the real voice.",
+      },
+      {
+        title: "styleMatch is distribution-aware",
+        detail:
+          "scoreStyleDeviation() compares drafts against the profile's actual distributions (length range, question rate, casing habits, topic clusters, profanity policy) with graduated penalties, and styleMatch is the blend of the original gate and this score — not a single blunt number.",
+      },
+    ],
+    action: "quality",
+  },
+  {
+    id: "moderation",
+    n: 8,
     title: "Moderation — every draft labeled, harmful categories blocked",
     liveAction:
       "Running the moderation layer live against a benign draft (allowed, flagged synthetic) and a policy-violating sample (hard-blocked). Then inspect the moderation labels persisted on your generated drafts.",
@@ -212,17 +255,43 @@ export const TOUR_STAGES: TourStage[] = [
     action: "moderate",
   },
   {
-    id: "persistence",
-    n: 8,
-    title: "Persistence — Drizzle + SQLite, disciplined migrations",
+    id: "shadow",
+    n: 9,
+    title: "Shadow validation — an independent model judges the output",
     liveAction:
-      "The demo user's profile, corpus, generation jobs, and moderation-labeled drafts all live in data/app.db right now — queried per-user on every page load.",
+      "Inspecting the verdict recorded on your generation job: a secondary model from the router chain (never the model that wrote the drafts) answered a single Yes/No question — was the output on-topic and coherent?",
+    modules: ["modules/llm/shadow-validator", "app/api/generate"],
+    decisions: [
+      {
+        title: "Independent judge, one sharp question",
+        detail:
+          "runShadowValidation() asks a DIFFERENT model from the router chain (the generator model is explicitly skipped) a single Yes/No question: is this output on-topic and coherent? Style is explicitly out of scope — the deterministic gates own that.",
+      },
+      {
+        title: "Validation is a signal, not a gate",
+        detail:
+          "Non-blocking by design: a failed, timed-out (20s cap), or unavailable validator degrades to verdict 'unknown' and never fails the generation. Availability always beats a quality check that can take the pipeline down.",
+      },
+      {
+        title: "The verdict is persisted for observability",
+        detail:
+          "shadow_verdict and shadow_validator are columns on generation_jobs — every generation carries a durable record of what the independent judge thought, queryable alongside tokens and status.",
+      },
+    ],
+    action: "shadow",
+  },
+  {
+    id: "persistence",
+    n: 10,
+    title: "Persistence — Neon Postgres + Drizzle, disciplined migrations",
+    liveAction:
+      "The demo user's profile, corpus, generation jobs, and moderation-labeled drafts all live in Neon Postgres right now — queried per-user on every page load.",
     modules: ["db/schema", "db/migrations", "lib/rate-limit"],
     decisions: [
       {
-        title: "Zero external services for dev; swappable for deploy",
+        title: "Serverless Postgres with an edge-ready driver",
         detail:
-          "SQLite+WAL via Drizzle locally — no Redis, no Postgres to stand up. The ORM layer means deploying to Neon/Vercel Postgres is a connection-string change.",
+          "Drizzle over Neon Postgres via the neon-http serverless driver — one HTTP fetch per query, so the same client code runs on Node and edge runtimes. DATABASE_URL points at a pooled Neon connection string.",
       },
       {
         title: "Append-only, idempotent migrations",
