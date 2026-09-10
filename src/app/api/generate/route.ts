@@ -1,0 +1,104 @@
+import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { generationJobs } from "@/db/schema";
+import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
+import { getLlmClient } from "@/modules/llm/openrouter";
+import { generateDrafts, MissingKeyError } from "@/modules/voice/generation-service";
+import { styleProfileSchema } from "@/modules/analysis/style-profile";
+import { logger } from "@/lib/logger";
+import { requireUser, unauthorized } from "@/lib/require-user";
+import { rateLimit } from "@/lib/rate-limit";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
+
+export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
+  const rl = rateLimit(`generate:${user.id}`, 20, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Rate limit: max 20 generations per hour. Try again later." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } }
+    );
+  }
+
+  try {
+    const body = (await req.json()) as { handle?: string; count?: number; topic?: string };
+    const count = Math.min(8, Math.max(1, body.count ?? 5));
+    const profileRow = body.handle
+      ? getProfileByHandle(body.handle, user.id) // scoped to this user
+      : undefined;
+    if (!profileRow) {
+      return NextResponse.json({ error: "Profile not found — create one first." }, { status: 404 });
+    }
+    const profile = styleProfileSchema.parse(
+      JSON.parse(typeof profileRow.styleProfile === "string" ? profileRow.styleProfile : JSON.stringify(profileRow.styleProfile))
+    );
+    const corpusRows = getCorpus(profileRow.id);
+    const corpus = corpusRows.map((t) => ({
+      id: t.id,
+      text: t.text,
+      createdAt: t.postedAt ?? new Date().toISOString(),
+      likeCount: t.likes,
+      retweetCount: t.rts,
+      replyCount: t.replies,
+      quoteCount: 0,
+      impressionCount: t.impressions,
+    }));
+
+    const client = getLlmClient();
+    if (!client) {
+      const jobId = randomUUID();
+      getDb().insert(generationJobs).values({
+        id: jobId,
+        userId: user.id,
+        voiceProfileId: profileRow.id,
+        status: "failed",
+        error: "OPENROUTER_API_KEY missing",
+        count,
+        createdAt: new Date(),
+      }).run();
+      return NextResponse.json(
+        {
+          error:
+            "Generation unavailable: OPENROUTER_API_KEY is not configured. Add it to .env and restart.",
+          jobId,
+        },
+        { status: 503 }
+      );
+    }
+
+    const job = { id: randomUUID(), status: "running" as const };
+    getDb().insert(generationJobs).values({
+      id: job.id,
+      userId: user.id,
+      voiceProfileId: profileRow.id,
+      status: "running",
+      count,
+      createdAt: new Date(),
+    }).run();
+
+    try {
+      const outcome = await generateDrafts(client, profile, corpus, count, body.topic);
+      const rows = createDrafts(profileRow.id, job.id, outcome.drafts);
+      getDb().update(generationJobs).set({ status: "done" }).where(eq(generationJobs.id, job.id)).run();
+      return NextResponse.json({
+        ok: true,
+        jobId: job.id,
+        count: rows.length,
+        drafts: rows.map((d) => ({ id: d.id, text: d.text, styleMatch: d.styleMatch, status: d.status })),
+      });
+    } catch (err) {
+      if (err instanceof MissingKeyError) throw err;
+      getDb().update(generationJobs).set({ status: "failed", error: String(err) }).where(eq(generationJobs.id, job.id)).run();
+      throw err;
+    }
+  } catch (err) {
+    logger.error("Generation failed", { error: String(err), userId: user.id });
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
