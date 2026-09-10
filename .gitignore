@@ -4,4 +4,6 @@ data
 .env
 .env.local
 *.tsbuildinfo
-test-fixtures/
+# NOTE: test-fixtures/ is intentionally NOT ignored — the vendored fixture JSONs
+# must ship with the repo so Vercel deploys include them (demo tour + Test mode).
+/test-fixtures-real/

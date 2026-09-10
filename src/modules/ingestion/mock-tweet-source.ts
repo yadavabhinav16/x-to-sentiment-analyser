@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import path from "path";
 import type { RawTweet, RawUser, TweetSource } from "./ports/tweet-source";
 
@@ -17,12 +17,17 @@ export class MockTweetSource implements TweetSource {
   private tweets: RawTweet[];
 
   constructor(fixturesDir?: string) {
+    // Resolution order: explicit arg > TEST_FIXTURES_DIR env > bundled
+    // fixtures shipped with the repo (cwd-relative, cwd-proof fallbacks for
+    // serverless where cwd can be anything).
     const dir =
       fixturesDir ??
-      path.resolve(
-        process.env.TEST_FIXTURES_DIR ||
-          path.join(process.cwd(), "..", "test-fixtures")
-      );
+      process.env.TEST_FIXTURES_DIR ??
+      [
+        path.join(process.cwd(), "test-fixtures"), // vendored: app root (Vercel)
+        path.join(process.cwd(), "..", "test-fixtures"), // monorepo layout (local dev)
+      ].find((p) => existsSync(path.join(p, "elonmusk-user.json"))) ??
+      path.join(process.cwd(), "test-fixtures");
     const userBody = JSON.parse(
       readFileSync(path.join(dir, "elonmusk-user.json"), "utf8")
     );
