@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "test": "vitest run",
-    "db:push": "tsx src/db/push.ts"
+    "db:push": "tsx src/db/push.ts",
+    "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
     "@auth/core": "0.34.2",

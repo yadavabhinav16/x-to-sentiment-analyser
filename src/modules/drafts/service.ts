@@ -2,6 +2,7 @@ import { getDb } from "../../db";
 import { drafts, tweets, voiceProfiles } from "../../db/schema";
 import { eq, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { moderationMetadata } from "../voice/moderation";
 import { logger } from "../../lib/logger";
 
 export function listDrafts(profileId: string) {
@@ -49,15 +50,20 @@ export function createDrafts(
 ) {
   const db = getDb();
   const now = new Date();
-  const rows = items.map((it) => ({
-    id: randomUUID(),
-    generationId,
-    voiceProfileId: profileId,
-    text: it.text,
-    status: "suggested" as const,
-    styleMatch: it.styleMatch,
-    createdAt: now,
-  }));
+  const rows = items.map((it) => {
+    const mod = moderationMetadata(it.text);
+    return {
+      id: randomUUID(),
+      generationId,
+      voiceProfileId: profileId,
+      text: it.text,
+      status: "suggested" as const,
+      styleMatch: it.styleMatch,
+      moderationFlags: mod.flags,
+      moderationLabel: mod.label,
+      createdAt: now,
+    };
+  });
   db.insert(drafts).values(rows).run();
   logger.info("Drafts persisted", { profileId, count: rows.length });
   return rows;

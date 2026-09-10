@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { mkdirSync } from "fs";
 import path from "path";
 import * as schema from "./schema";
+import { MIGRATIONS, addDraftModerationColumns } from "./migrations";
 
 export function createDb() {
   const dir = path.join(process.cwd(), "data");
@@ -20,6 +21,13 @@ export function getDb() {
   return singleton;
 }
 
+/**
+ * Migration discipline (documented in src/db/migrations.ts):
+ * - Baseline CREATE TABLE IF NOT EXISTS statements below bootstrap fresh DBs.
+ * - Ordered, idempotent migrations in src/db/migrations.ts are applied and
+ *   tracked in a _migrations table; getDb() applies pending ones on startup.
+ * - Append new migrations there; never edit released ones.
+ */
 function migrate(sqlite: Database.Database) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -75,5 +83,29 @@ function migrate(sqlite: Database.Database) {
     sqlite.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT;`);
   } catch {
     /* column already present */
+  }
+
+  // Ordered idempotent migrations, tracked in _migrations.
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS _migrations (
+    id TEXT PRIMARY KEY,
+    applied_at INTEGER NOT NULL
+  )`);
+  const applied = new Set(
+    (sqlite.prepare("SELECT id FROM _migrations").all() as Array<{ id: string }>).map(
+      (r) => r.id
+    )
+  );
+  for (const m of MIGRATIONS) {
+    if (applied.has(m.id)) continue;
+    sqlite.transaction(() => {
+      if (m.id === "2026-09-10-002-draft-moderation-columns") {
+        addDraftModerationColumns(sqlite);
+      } else {
+        sqlite.exec(m.sql);
+      }
+      sqlite
+        .prepare("INSERT INTO _migrations (id, applied_at) VALUES (?, ?)")
+        .run(m.id, Date.now());
+    })();
   }
 }

@@ -5,6 +5,7 @@ import { createProfileFromHandle } from "@/modules/profiles/create-service";
 import { logger } from "@/lib/logger";
 import { requireUser, unauthorized } from "@/lib/require-user";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
+import { withIdempotency, IdempotencyConflictError } from "@/modules/llm/idempotency";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
       handle?: string;
       limit?: number;
       mode?: "test" | "realtime";
+      idempotencyKey?: string;
     };
     const handle = (body.handle ?? "").replace(/^@/, "").trim();
     if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) {
@@ -62,12 +64,49 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const { profileId, sampleCount } = await createProfileFromHandle(
-      handle,
-      source,
-      Math.min(100, body.limit ?? 100),
-      user.id
-    );
+    // Idempotency: caller may supply an idempotencyKey so retries/duplicate
+    // submissions return the cached result instead of re-running the pipeline.
+    const idemKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
+      ? body.idempotencyKey.trim().slice(0, 128)
+      : null;
+
+    const run = () =>
+      createProfileFromHandle(handle, source, Math.min(100, body.limit ?? 100), user.id);
+
+    const respond = (r: { profileId: string; sampleCount: number }, replayed: boolean) =>
+      NextResponse.json({
+        ok: true,
+        profileId: r.profileId,
+        handle,
+        sampleCount: r.sampleCount,
+        mode: body.mode ?? "default",
+        thinCorpus: r.sampleCount < 20,
+        replayed,
+      });
+
+    if (idemKey) {
+      try {
+        const { record, value } = await withIdempotency(
+          `profiles:create:${user.id}`,
+          idemKey,
+          run
+        );
+        return respond(
+          (value ?? JSON.parse(record!.result!)) as { profileId: string; sampleCount: number },
+          !!record
+        );
+      } catch (err) {
+        if (err instanceof IdempotencyConflictError) {
+          return NextResponse.json(
+            { error: "A request with this idempotency key is already in progress." },
+            { status: 409 }
+          );
+        }
+        throw err;
+      }
+    }
+
+    const { profileId, sampleCount } = await run();
     return NextResponse.json({
       ok: true,
       profileId,

@@ -5,6 +5,8 @@ import { getDb } from "@/db";
 import { generationJobs } from "@/db/schema";
 import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
 import { getLlmClient } from "@/modules/llm/openrouter";
+import { LlmRouter } from "@/modules/llm/router";
+import { moderateDraft } from "@/modules/voice/moderation";
 import { generateDrafts, MissingKeyError } from "@/modules/voice/generation-service";
 import { styleProfileSchema } from "@/modules/analysis/style-profile";
 import { logger } from "@/lib/logger";
@@ -83,14 +85,31 @@ export async function POST(req: NextRequest) {
     }).run();
 
     try {
-      const outcome = await generateDrafts(client, profile, corpus, count, body.topic);
-      const rows = createDrafts(profileRow.id, job.id, outcome.drafts);
+      // Route through provider-failover router (single provider today; more via env later).
+      const router = new LlmRouter([
+        { name: "openrouter", client, priority: 1 },
+      ]);
+      const outcome = await generateDrafts(router, profile, corpus, count, body.topic);
+      const moderated = outcome.drafts.filter((d) => moderateDraft(d.text).allowed);
+      const blockedCount = outcome.drafts.length - moderated.length;
+      if (blockedCount > 0) {
+        logger.warn("Drafts blocked by moderation", { jobId: job.id, blockedCount });
+      }
+      const rows = moderated.length ? createDrafts(profileRow.id, job.id, moderated) : [];
       getDb().update(generationJobs).set({ status: "done" }).where(eq(generationJobs.id, job.id)).run();
       return NextResponse.json({
         ok: true,
         jobId: job.id,
         count: rows.length,
-        drafts: rows.map((d) => ({ id: d.id, text: d.text, styleMatch: d.styleMatch, status: d.status })),
+        blockedCount,
+        drafts: rows.map((d) => ({
+          id: d.id,
+          text: d.text,
+          styleMatch: d.styleMatch,
+          status: d.status,
+          moderationFlags: d.moderationFlags,
+          moderationLabel: d.moderationLabel,
+        })),
       });
     } catch (err) {
       if (err instanceof MissingKeyError) throw err;
