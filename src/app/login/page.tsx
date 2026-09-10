@@ -69,53 +69,31 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={submit} className="space-y-3">
-          <input
-            type="email"
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-blue-600"
-          />
-          <input
-            type="password"
-            required
-            minLength={8}
-            placeholder={tab === "register" ? "Password (min 8 chars)" : "Password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-blue-600"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-          >
-            {busy ? "Working…" : tab === "register" ? "Create account" : "Sign in"}
-          </button>
-        </form>
-
-        <div className="relative text-center">
-          <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-neutral-800" /></div>
-          <span className="relative bg-neutral-900 px-2 text-xs text-neutral-500">or OAuth</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={() => signIn("google", { callbackUrl: "/" })}
-            className="rounded-lg border border-neutral-800 px-3 py-2 text-sm hover:border-neutral-600 disabled:opacity-40"
-            title="Configure GOOGLE_CLIENT_ID/SECRET to enable"
-          >
-            Google
-          </button>
-          <button
-            onClick={() => signIn("github", { callbackUrl: "/" })}
-            className="rounded-lg border border-neutral-800 px-3 py-2 text-sm hover:border-neutral-600 disabled:opacity-40"
-            title="Configure GITHUB_CLIENT_ID/SECRET to enable"
-          >
-            GitHub
-          </button>
-        </div>
+            <input
+              type="email"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-blue-600"
+            />
+            <input
+              type="password"
+              required
+              minLength={8}
+              placeholder={tab === "register" ? "Password (min 8 chars)" : "Password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-blue-600"
+            />
+            <button
+              type="submit"
+              disabled={busy}
+              className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+            >
+              {busy ? "Working…" : tab === "register" ? "Create account" : "Sign in"}
+            </button>
+          </form>
       </div>
     </main>
   );

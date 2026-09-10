@@ -6,10 +6,6 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default("nvidia/nemotron-3.5-lightning:free"),
   AUTH_SECRET: z.string().default("dev-secret-change-me"),
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GITHUB_CLIENT_ID: z.string().optional(),
-  GITHUB_CLIENT_SECRET: z.string().optional(),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
 
