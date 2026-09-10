@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function Dashboard() {
   const user = await requireUser();
   if (!user) redirect("/login");
-  const profiles = safeList(user.id);
+  const profiles = await safeList(user.id);
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
@@ -75,9 +75,9 @@ export default async function Dashboard() {
   );
 }
 
-function safeList(userId: string) {
+async function safeList(userId: string) {
   try {
-    return listProfiles(userId);
+    return await listProfiles(userId);
   } catch {
     return [];
   }

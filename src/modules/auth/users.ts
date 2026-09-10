@@ -10,19 +10,20 @@ export interface AuthUser {
   name: string | null;
 }
 
-export function findUserByEmail(email: string): (typeof users.$inferSelect) | undefined {
+export async function findUserByEmail(email: string): Promise<(typeof users.$inferSelect) | undefined> {
   const clean = email.trim().toLowerCase();
-  const all = getDb().select().from(users).all();
+  const all = await getDb().select().from(users);
   return all.find((u) => (u.email ?? "").toLowerCase() === clean);
 }
 
-export function getUserById(id: string): (typeof users.$inferSelect) | undefined {
-  return getDb().select().from(users).where(eq(users.id, id)).get();
+export async function getUserById(id: string): Promise<(typeof users.$inferSelect) | undefined> {
+  const rows = await getDb().select().from(users).where(eq(users.id, id)).limit(1);
+  return rows[0];
 }
 
-export function createUser(email: string, password: string, name?: string) {
+export async function createUser(email: string, password: string, name?: string) {
   const db = getDb();
-  if (findUserByEmail(email)) throw new Error("An account with this email already exists.");
+  if (await findUserByEmail(email)) throw new Error("An account with this email already exists.");
   const row = {
     id: randomUUID(),
     email: email.trim().toLowerCase(),
@@ -30,12 +31,12 @@ export function createUser(email: string, password: string, name?: string) {
     passwordHash: hashPassword(password),
     createdAt: new Date(),
   };
-  db.insert(users).values(row).run();
+  await db.insert(users).values(row);
   return row;
 }
 
-export function authenticate(email: string, password: string): AuthUser | null {
-  const user = findUserByEmail(email);
+export async function authenticate(email: string, password: string): Promise<AuthUser | null> {
+  const user = await findUserByEmail(email);
   if (!user?.passwordHash) return null;
   if (!verifyPassword(password, user.passwordHash)) return null;
   return { id: user.id, email: user.email ?? email, name: user.name };

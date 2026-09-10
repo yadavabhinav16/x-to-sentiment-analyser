@@ -15,8 +15,8 @@ export async function POST(
   if (!rl.allowed) {
     return NextResponse.json({ error: "Rate limit exceeded. Try again later." }, { status: 429 });
   }
-  const draft = getDraftForUser(params.id, user.id);
+  const draft = await getDraftForUser(params.id, user.id);
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
-  const updated = updateDraft(params.id, { status: "rejected" });
+  const updated = await updateDraft(params.id, { status: "rejected" });
   return NextResponse.json({ ok: true, draft: updated });
 }

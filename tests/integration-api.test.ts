@@ -5,15 +5,11 @@
  *
  * Route handlers are called directly as functions with mocked auth + NextRequest.
  */
-import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { describe, it, expect, beforeEach, beforeAll, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-// 1. Isolated temp DB per test run (must run before route/db imports resolve getDb).
-const dir = mkdtempSync(join(tmpdir(), "int-"));
-process.chdir(dir);
+// DB is the real Neon Postgres (DATABASE_URL from .env.local via setup-env).
+// No live X API and no live OpenRouter calls below.
 
 const testUser = { id: "user-test-1", email: "int-test@example.com", name: "Int Test" };
 
@@ -101,9 +97,10 @@ async function createProfileViaApi(handle = "elonmusk", idempotencyKey?: string)
 }
 
 beforeAll(async () => {
-  // ensure migrations applied for this temp DB, and back the session user with a real row
+  // back the session user with a real row (migrations applied by vitest setup)
   const db = getDb();
-  db.insert(usersTable)
+  await db
+    .insert(usersTable)
     .values({
       id: testUser.id,
       email: testUser.email,
@@ -111,17 +108,12 @@ beforeAll(async () => {
       passwordHash: "x",
       createdAt: new Date(),
     })
-    .onConflictDoNothing()
-    .run();
+    .onConflictDoNothing();
 });
 
 beforeEach(() => {
   resetBreakers();
   rateLimit._reset?.();
-});
-
-afterAll(() => {
-  rmSync(dir, { recursive: true, force: true });
 });
 
 describe("POST /api/profiles (integration)", () => {
@@ -210,14 +202,15 @@ describe("draft persistence and moderation columns (integration)", () => {
     await createProfileViaApi("elonmusk");
     await generate(req("/api/generate", { handle: "elonmusk", count: 2 }));
     const db = getDb();
-    const rows = db.select().from(drafts).all();
+    const rows = await db.select().from(drafts);
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) {
       expect(r.moderationLabel).toBe("AI-generated");
       const flags = r.moderationFlags as unknown as string[];
       expect(flags).toContain("synthetic_content");
     }
-    const profile = db.select().from(voiceProfiles).all()[0];
-    expect(profile.userId).toBe(testUser.id);
+    const profiles = await db.select().from(voiceProfiles);
+    const profile = profiles.find((x) => x.userId === testUser.id);
+    expect(profile).toBeTruthy();
   });
 });

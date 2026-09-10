@@ -24,23 +24,22 @@ export async function createProfileFromHandle(
 
   const db = getDb();
   // Upsert: replace existing profile for this handle (scoped to this user)
-  const existing = getProfileByHandle(clean, userId);
+  const existing = await getProfileByHandle(clean, userId);
   let profileId: string;
   if (existing) {
     profileId = existing.id;
-    db.delete(tweets).where(eq(tweets.voiceProfileId, profileId)).run();
-    db.update(voiceProfiles)
+    await db.delete(tweets).where(eq(tweets.voiceProfileId, profileId));
+    await db.update(voiceProfiles)
       .set({
         styleProfile: JSON.stringify(profile),
         sampleCount: raw.length,
         displayName: user.name,
         corpusFetchedAt: new Date(),
       })
-      .where(eq(voiceProfiles.id, profileId))
-      .run();
+      .where(eq(voiceProfiles.id, profileId));
   } else {
     profileId = randomUUID();
-    db.insert(voiceProfiles)
+    await db.insert(voiceProfiles)
       .values({
         id: profileId,
         userId,
@@ -50,11 +49,10 @@ export async function createProfileFromHandle(
         sampleCount: raw.length,
         corpusFetchedAt: new Date(),
         createdAt: new Date(),
-      })
-      .run();
+      });
   }
 
-  db.insert(tweets)
+  await db.insert(tweets)
     .values(
       raw.map((t) => ({
         id: `${profileId}:${t.id}`,
@@ -67,8 +65,7 @@ export async function createProfileFromHandle(
         impressions: t.impressionCount,
         source: "mock_x_api",
       }))
-    )
-    .run();
+    );
 
   logger.info("Profile created", { handle: clean, profileId, sampleCount: raw.length });
   return { profileId, sampleCount: raw.length };

@@ -10,7 +10,7 @@ import { MockTweetSource } from "@/modules/ingestion/mock-tweet-source";
 import { createProfileFromHandle } from "@/modules/profiles/create-service";
 import { styleProfileSchema } from "@/modules/analysis/style-profile";
 import { getLlmClient } from "@/modules/llm/openrouter";
-import { LlmRouter } from "@/modules/llm/router";
+import { buildLlmRouter, LlmRouter } from "@/modules/llm/router";
 import { moderateDraft } from "@/modules/voice/moderation";
 import { generateDrafts } from "@/modules/voice/generation-service";
 import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
@@ -96,12 +96,12 @@ export async function POST(req: NextRequest) {
       }
 
       case "analyze": {
-        const row = getProfileByHandle(handle, user.id);
+        const row = await getProfileByHandle(handle, user.id);
         if (!row) {
           return NextResponse.json({ error: "Run the ingestion stage first." }, { status: 404 });
         }
         const profile = parseStoredProfile(row.styleProfile);
-        const corpus = getCorpus(row.id);
+        const corpus = await getCorpus(row.id);
         return NextResponse.json({
           ok: true,
           stage,
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
 
       case "resilience": {
         const client = getLlmClient();
-        const router = client ? new LlmRouter([{ name: "openrouter", client, priority: 1 }]) : null;
+        const router = client ? buildLlmRouter(process.env.OPENROUTER_API_KEY ?? "") : null;
         return NextResponse.json({
           ok: true,
           stage,
@@ -136,12 +136,12 @@ export async function POST(req: NextRequest) {
       }
 
       case "generate": {
-        const row = getProfileByHandle(handle, user.id);
+        const row = await getProfileByHandle(handle, user.id);
         if (!row) {
           return NextResponse.json({ error: "Run the ingestion stage first." }, { status: 404 });
         }
         const profile = parseStoredProfile(row.styleProfile);
-        const corpusRows = getCorpus(row.id);
+        const corpusRows = await getCorpus(row.id);
         const client = getLlmClient();
         if (!client) {
           return NextResponse.json(
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
             { status: 503 }
           );
         }
-        const router = new LlmRouter([{ name: "openrouter", client, priority: 1 }]);
+        const router = buildLlmRouter(process.env.OPENROUTER_API_KEY ?? "");
         const outcome = await generateDrafts(
           router,
           profile,
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
         // Persist exactly like the production /api/generate route: a first-class
         // generation job row plus moderation-labeled drafts, so later stages and
         // the dashboard read the same durable data.
-        getDb()
+        await getDb()
           .insert(generationJobs)
           .values({
             id: jobId,
@@ -185,10 +185,9 @@ export async function POST(req: NextRequest) {
             status: "done",
             count: outcome.drafts.length,
             createdAt: new Date(),
-          })
-          .run();
+          });
         const rows = moderated.length
-          ? createDrafts(row.id, jobId, moderated.map((d) => ({ text: d.text, styleMatch: d.styleMatch })))
+          ? await createDrafts(row.id, jobId, moderated.map((d) => ({ text: d.text, styleMatch: d.styleMatch })))
           : [];
         return NextResponse.json({
           ok: true,
@@ -212,13 +211,12 @@ export async function POST(req: NextRequest) {
           "Shipping the new release today. Small team, big week — feedback welcome."
         );
         const blocked = moderateDraft("read this thread about how to make a bomb");
-        const row = getProfileByHandle(handle, user.id);
+        const row = await getProfileByHandle(handle, user.id);
         const stored = row
-          ? getDb()
+          ? await getDb()
               .select({ flags: drafts.moderationFlags, label: drafts.moderationLabel })
               .from(drafts)
               .where(eq(drafts.voiceProfileId, row.id))
-              .all()
           : [];
         return NextResponse.json({
           ok: true,
@@ -233,26 +231,24 @@ export async function POST(req: NextRequest) {
       }
 
       case "persist": {
-        const profiles = getDb()
+        const profiles = await getDb()
           .select({
             id: voiceProfiles.id,
             handle: voiceProfiles.handle,
             sampleCount: voiceProfiles.sampleCount,
           })
           .from(voiceProfiles)
-          .where(eq(voiceProfiles.userId, user.id))
-          .all();
-        const corpusCountRows = getDb()
+          .where(eq(voiceProfiles.userId, user.id));
+        const corpusCountRows = await getDb()
           .select({ count: sql<number>`count(*)` })
           .from(tweets)
           .innerJoin(voiceProfiles, eq(tweets.voiceProfileId, voiceProfiles.id))
-          .where(eq(voiceProfiles.userId, user.id))
-          .all();
+          .where(eq(voiceProfiles.userId, user.id));
         return NextResponse.json({
           ok: true,
           stage,
           evidence: {
-            engine: "SQLite (WAL) via Drizzle ORM — zero external services in dev",
+            engine: "Neon Postgres via Drizzle ORM (neon-http serverless driver)",
             migrations: "append-only, guarded (IF NOT EXISTS / check-before-alter), transactional, tracked in _migrations",
             profilesOwnedByThisUser: profiles,
             corpusRowsForThisUser: corpusCountRows[0]?.count ?? 0,

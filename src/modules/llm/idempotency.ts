@@ -36,12 +36,13 @@ export class IdempotencyConflictError extends Error {
 
 const inFlight = new Set<string>();
 
-function row(scope: string, key: string): IdempotencyRow | undefined {
-  return getDb()
+async function row(scope: string, key: string): Promise<IdempotencyRow | undefined> {
+  const rows = await getDb()
     .select()
     .from(idempotencyKeys)
     .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)))
-    .get() as IdempotencyRow | undefined;
+    .limit(1);
+  return rows[0] as IdempotencyRow | undefined;
 }
 
 export async function withIdempotency<T>(
@@ -50,7 +51,7 @@ export async function withIdempotency<T>(
   fn: () => Promise<T>
 ): Promise<{ record: IdempotencyRow | null; value?: T }> {
   const lockId = `${scope}:${key}`;
-  const existing = row(scope, key);
+  const existing = await row(scope, key);
 
   if (existing?.status === "completed") {
     return {
@@ -66,26 +67,23 @@ export async function withIdempotency<T>(
 
   const now = new Date();
   const db = getDb();
-  db.insert(idempotencyKeys)
+  await db.insert(idempotencyKeys)
     .values({ scope, key, status: "in_progress", createdAt: now, updatedAt: now })
     .onConflictDoUpdate({
       target: [idempotencyKeys.scope, idempotencyKeys.key],
       set: { status: "in_progress", error: null, result: null, updatedAt: now },
-    })
-    .run();
+    });
 
   try {
     const value = await fn();
-    db.update(idempotencyKeys)
+    await db.update(idempotencyKeys)
       .set({ status: "completed", result: JSON.stringify(value), updatedAt: new Date() })
-      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)))
-      .run();
+      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
     return { record: null, value };
   } catch (err) {
-    db.update(idempotencyKeys)
+    await db.update(idempotencyKeys)
       .set({ status: "failed", error: String(err), updatedAt: new Date() })
-      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)))
-      .run();
+      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
     throw err;
   } finally {
     inFlight.delete(lockId);
@@ -93,8 +91,8 @@ export async function withIdempotency<T>(
 }
 
 /** Look up a completed result (parsed), or null. */
-export function getCompleted<T>(scope: string, key: string): T | null {
-  const r = row(scope, key);
+export async function getCompleted<T>(scope: string, key: string): Promise<T | null> {
+  const r = await row(scope, key);
   if (!r || r.status !== "completed" || r.result === null) return null;
   return JSON.parse(r.result) as T;
 }

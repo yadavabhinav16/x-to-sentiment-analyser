@@ -1,4 +1,5 @@
 import type { LlmClient, LlmMessage, LlmResult } from "./openrouter";
+import { OpenRouterClient } from "./openrouter";
 import { logger } from "../../lib/logger";
 import {
   allowRequest,
@@ -90,4 +91,45 @@ export class LlmRouter {
       state: getBreakerState(p.name),
     }));
   }
+}
+
+/** Default provider chain when LLM_PROVIDERS is unset. */
+export const DEFAULT_LLM_CHAIN =
+  "z-ai/glm-5.3-flash,nex-agi/nex-n2.5-pro:free,nvidia/nemotron-3-ultra-550b-a55b:free";
+
+/**
+ * Parse a comma-separated provider chain string into slugs.
+ * Trims whitespace, drops empties, dedupes.
+ */
+export function parseLlmChain(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const slug = part.trim();
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+  }
+  return out;
+}
+
+/**
+ * Build an LlmRouter from the LLM_PROVIDERS env var (comma-separated model
+ * slugs, tried in order). Falls back to LLM_MODEL (deprecated single model),
+ * then to DEFAULT_LLM_CHAIN. Each provider is an OpenRouterClient named by
+ * its slug, with priority = position in the chain (lower = first).
+ */
+export function buildLlmRouter(
+  apiKey: string = process.env.OPENROUTER_API_KEY ?? ""
+): LlmRouter {
+  const raw =
+    process.env.LLM_PROVIDERS ??
+    (process.env.LLM_MODEL ? process.env.LLM_MODEL : DEFAULT_LLM_CHAIN);
+  const slugs = parseLlmChain(raw);
+  const providers: RoutedProvider[] = slugs.map((slug, i) => ({
+    name: slug,
+    client: new OpenRouterClient(apiKey, slug),
+    priority: i + 1,
+  }));
+  return new LlmRouter(providers);
 }

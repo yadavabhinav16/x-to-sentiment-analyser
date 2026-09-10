@@ -14,7 +14,7 @@ export default async function ProfilePage({
   const user = await requireUser();
   if (!user) redirect("/login");
   const handle = decodeURIComponent(params.handle).replace(/^@/, "");
-  const row = safeProfile(handle, user.id);
+  const row = await safeProfile(handle, user.id);
   if (!row) {
     return (
       <main className="mx-auto max-w-4xl px-6 py-16 text-center">
@@ -26,8 +26,8 @@ export default async function ProfilePage({
   const parsed = styleProfileSchema.safeParse(
     JSON.parse(typeof row.styleProfile === "string" ? row.styleProfile : JSON.stringify(row.styleProfile))
   );
-  const corpus = getCorpus(row.id);
-  const drafts = listDrafts(row.id);
+  const corpus = await getCorpus(row.id);
+  const drafts = await listDrafts(row.id);
 
   return (
     <ProfileView
@@ -46,9 +46,9 @@ export default async function ProfilePage({
   );
 }
 
-function safeProfile(handle: string, userId: string) {
+async function safeProfile(handle: string, userId: string) {
   try {
-    return getProfileByHandle(handle, userId);
+    return await getProfileByHandle(handle, userId);
   } catch {
     return undefined;
   }

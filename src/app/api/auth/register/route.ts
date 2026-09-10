@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const { email, password, name } = parsed.data;
-    const user = createUser(email, password, name);
+    const user = await createUser(email, password, name);
     return NextResponse.json({ ok: true, user: { id: user.id, email: user.email } }, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: String(err instanceof Error ? err.message : err) }, { status: 400 });

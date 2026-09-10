@@ -37,10 +37,10 @@ if (process.env.NODE_ENV === "development") {
         const email = (credentials?.email as string) || "dev@example.com";
         if (!EMAIL_RE.test(email)) return null;
         // Ensure a backing user row exists for dev sign-in.
-        let user = findUserByEmail(email);
+        let user = await findUserByEmail(email);
         if (!user) {
           const { createUser } = await import("./users");
-          user = createUser(email, "dev-password-placeholder");
+          user = await createUser(email, "dev-password-placeholder");
         }
         return { id: user.id, name: user.name, email: user.email ?? email };
       },

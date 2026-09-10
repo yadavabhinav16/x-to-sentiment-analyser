@@ -10,9 +10,9 @@ export async function PATCH(
 ) {
   const user = await requireUser();
   if (!user) return unauthorized();
-  const draft = getDraftForUser(params.id, user.id);
+  const draft = await getDraftForUser(params.id, user.id);
   if (!draft) return NextResponse.json({ error: "Draft not found" }, { status: 404 });
   const body = (await req.json()) as { editedText?: string; status?: "suggested" | "approved" | "rejected" };
-  const updated = updateDraft(params.id, body);
+  const updated = await updateDraft(params.id, body);
   return NextResponse.json({ ok: true, draft: updated });
 }
