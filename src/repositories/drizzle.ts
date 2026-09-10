@@ -31,8 +31,13 @@ import type {
 export class DrizzleUserRepository implements UserRepository {
   async findByEmail(email: string): Promise<User | undefined> {
     const clean = email.trim().toLowerCase();
-    const all = await getDb().select().from(users);
-    return all.find((u) => (u.email ?? "").toLowerCase() === clean);
+    // Uses the functional lower(email) index from migration 2026-09-11-003.
+    const rows = await getDb()
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${clean}`)
+      .limit(1);
+    return rows[0];
   }
 
   async findById(id: string): Promise<User | undefined> {
@@ -50,10 +55,22 @@ export class DrizzleUserRepository implements UserRepository {
 export class DrizzleVoiceProfileRepository implements VoiceProfileRepository {
   async findByHandle(handle: string, userId?: string): Promise<VoiceProfile | undefined> {
     const clean = handle.replace(/^@/, "").toLowerCase();
-    const all = await getDb().select().from(voiceProfiles);
-    return all.find(
-      (p) => p.handle.toLowerCase() === clean && (userId === undefined || p.userId === userId)
-    );
+    // Uses voice_profiles_handle_idx. Case-insensitivity handled here because
+    // the stored handle preserves its original casing.
+    if (userId === undefined) {
+      const rows = await getDb()
+        .select()
+        .from(voiceProfiles)
+        .where(sql`lower(${voiceProfiles.handle}) = ${clean}`)
+        .limit(2);
+      return rows.find((p) => p.handle.toLowerCase() === clean);
+    }
+    const rows = await getDb()
+      .select()
+      .from(voiceProfiles)
+      .where(and(sql`lower(${voiceProfiles.handle}) = ${clean}`, eq(voiceProfiles.userId, userId)))
+      .limit(2);
+    return rows.find((p) => p.handle.toLowerCase() === clean);
   }
 
   async findById(id: string, userId?: string): Promise<VoiceProfile | undefined> {
