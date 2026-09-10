@@ -15,6 +15,8 @@ interface BreakerEntry {
   state: BreakerState;
   failures: number;
   openedAt: number;
+  /** Per-key cooldown so getBreakerState honours the caller's cooldown option. */
+  cooldownMs: number;
 }
 
 const breakers = new Map<string, BreakerEntry>();
@@ -26,7 +28,7 @@ export function getBreakerState(key: string): BreakerState {
   const e = breakers.get(key);
   if (!e) return "closed";
   if (e.state === "open") {
-    if (Date.now() - e.openedAt >= DEFAULT_COOLDOWN_MS) {
+    if (Date.now() - e.openedAt >= e.cooldownMs) {
       e.state = "half-open";
       return "half-open";
     }
@@ -43,7 +45,7 @@ export function allowRequest(key: string, opts: BreakerOptions = {}): boolean {
 }
 
 export function recordSuccess(key: string): void {
-  breakers.set(key, { state: "closed", failures: 0, openedAt: 0 });
+  breakers.set(key, { state: "closed", failures: 0, openedAt: 0, cooldownMs: DEFAULT_COOLDOWN_MS });
 }
 
 export function recordFailure(
@@ -52,14 +54,18 @@ export function recordFailure(
 ): { opened: boolean } {
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
   const cooldownMs = opts.cooldownMs ?? DEFAULT_COOLDOWN_MS;
-  let e = breakers.get(key);
-  if (!e) {
-    e = { state: "closed", failures: 0, openedAt: 0 };
-  }
+  const e: BreakerEntry = breakers.get(key) ?? {
+    state: "closed",
+    failures: 0,
+    openedAt: 0,
+    cooldownMs,
+  };
+  e.cooldownMs = cooldownMs;
   e.failures += 1;
   if (e.failures >= threshold || e.state === "half-open") {
     e.state = "open";
     e.openedAt = Date.now();
+    e.failures = 0;
     breakers.set(key, e);
     return { opened: true };
   }

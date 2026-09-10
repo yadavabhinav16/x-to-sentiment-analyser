@@ -67,8 +67,8 @@ function fakeLlmClient() {
 
 import { POST as createProfile } from "@/app/api/profiles/route";
 import { POST as generate } from "@/app/api/generate/route";
-import { GET as listDraftsRoute } from "@/app/api/drafts/[id]/route";
 import { resetBreakers } from "@/lib/circuit-breaker";
+import { _reset as resetRateLimit } from "@/lib/rate-limit";
 import { rateLimit } from "@/lib/rate-limit";
 import { getDb } from "@/db";
 import { drafts, voiceProfiles, users as usersTable } from "@/db/schema";
@@ -130,7 +130,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   resetBreakers();
-  rateLimit._reset?.();
+  resetRateLimit();
 });
 
 describe("POST /api/profiles (integration)", () => {

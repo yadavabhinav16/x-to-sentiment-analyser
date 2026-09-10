@@ -1,6 +1,5 @@
-import { getDb } from "../../db";
-import { idempotencyKeys } from "../../db/schema";
-import { eq, and } from "drizzle-orm";
+import { idempotencyRepository } from "../../repositories";
+import type { IdempotencyRow } from "../../db/schema";
 import { logger } from "../../lib/logger";
 
 /**
@@ -19,17 +18,12 @@ import { logger } from "../../lib/logger";
  * causing duplicate LLM execution). The in-process Set is only a fast-path
  * guard for same-instance duplicates; the DB constraint is the durable
  * backstop across instances.
+ *
+ * DB access goes through the IdempotencyRepository interface; the Drizzle
+ * implementation is wired in src/repositories/index.ts.
  */
 
-export interface IdempotencyRow {
-  key: string;
-  scope: string;
-  status: "in_progress" | "completed" | "failed";
-  result: string | null;
-  error: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type { IdempotencyRow } from "../../db/schema";
 
 export class IdempotencyConflictError extends Error {
   constructor(scope: string, key: string) {
@@ -42,13 +36,8 @@ export class IdempotencyConflictError extends Error {
 
 const inFlight = new Set<string>();
 
-async function row(scope: string, key: string): Promise<IdempotencyRow | undefined> {
-  const rows = await getDb()
-    .select()
-    .from(idempotencyKeys)
-    .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)))
-    .limit(1);
-  return rows[0] as IdempotencyRow | undefined;
+async function row(scope: string, key: string) {
+  return idempotencyRepository.find(scope, key);
 }
 
 export async function withIdempotency<T>(
@@ -71,9 +60,7 @@ export async function withIdempotency<T>(
   // A failed row from a previous run is reclaimable: delete it so the
   // insert-if-absent claim below can win.
   if (existing?.status === "failed") {
-    await getDb()
-      .delete(idempotencyKeys)
-      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
+    await idempotencyRepository.delete(scope, key);
   }
 
   // Atomically claim the key: insert-if-absent. affected rows = 0 means a
@@ -81,14 +68,17 @@ export async function withIdempotency<T>(
   // read and now) — re-read and replay/conflict accordingly.
   inFlight.add(lockId);
   const now = new Date();
-  const db = getDb();
   let claimed = false;
   try {
-    const inserted = await db
-      .insert(idempotencyKeys)
-      .values({ scope, key, status: "in_progress", createdAt: now, updatedAt: now })
-      .onConflictDoNothing({ target: [idempotencyKeys.scope, idempotencyKeys.key] })
-      .returning({ scope: idempotencyKeys.scope });
+    const inserted = await idempotencyRepository.claim({
+      scope,
+      key,
+      status: "in_progress",
+      result: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    });
     claimed = inserted.length > 0;
   } finally {
     if (!claimed) inFlight.delete(lockId);
@@ -109,15 +99,19 @@ export async function withIdempotency<T>(
 
   try {
     const value = await fn();
-    await db.update(idempotencyKeys)
-      .set({ status: "completed", result: JSON.stringify(value), updatedAt: new Date() })
-      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
+    await idempotencyRepository.update(scope, key, {
+      status: "completed",
+      result: JSON.stringify(value),
+      updatedAt: new Date(),
+    });
     return { record: null, value };
   } catch (err) {
     logger.warn("Idempotent operation failed", { scope, key, error: String(err) });
-    await db.update(idempotencyKeys)
-      .set({ status: "failed", error: String(err), updatedAt: new Date() })
-      .where(and(eq(idempotencyKeys.scope, scope), eq(idempotencyKeys.key, key)));
+    await idempotencyRepository.update(scope, key, {
+      status: "failed",
+      error: String(err),
+      updatedAt: new Date(),
+    });
     throw err;
   } finally {
     inFlight.delete(lockId);

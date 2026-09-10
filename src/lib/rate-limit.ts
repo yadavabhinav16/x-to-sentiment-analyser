@@ -37,6 +37,13 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
   return { allowed: true, remaining: limit - entry.count, retryAfterSec: 0 };
 }
 
+/** Test isolation helper: clear all buckets. */
+export const _reset = reset;
+
+function reset(): void {
+  buckets.clear();
+}
+
 /** Best-effort client IP from proxy headers (for anonymous rate limiting). */
 export function clientIp(req: Request): string {
   const fwd = req.headers.get("x-forwarded-for");

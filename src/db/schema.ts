@@ -110,6 +110,16 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
   pk: primaryKey({ columns: [t.scope, t.key] }),
 }));
 
+export type IdempotencyRow = {
+  key: string;
+  scope: string;
+  status: "in_progress" | "completed" | "failed";
+  result: string | null;
+  error: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type User = typeof users.$inferSelect;
 export type VoiceProfile = typeof voiceProfiles.$inferSelect;
 export type Tweet = typeof tweets.$inferSelect;
