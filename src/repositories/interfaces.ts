@@ -34,7 +34,8 @@ export interface DraftRepository {
   /** Most recent drafts for a profile, trimmed projection for quality reporting. */
   recentByProfile(profileId: string, limit: number): Promise<Array<Pick<Draft, "text" | "styleMatch" | "moderationFlags" | "moderationLabel">>>;
   findById(id: string): Promise<Draft | undefined>;
-  insertMany(rows: Array<Omit<Draft, "editedText"> & { editedText?: string | null }>): Promise<void>;
+  /** Nullable/defaulted columns (editedText, flags, label) may be omitted. */
+  insertMany(rows: Array<Omit<Draft, "editedText" | "moderationFlags" | "moderationLabel"> & Partial<Pick<Draft, "editedText" | "moderationFlags" | "moderationLabel">>>): Promise<void>;
   update(id: string, patch: { editedText?: string; status?: "suggested" | "approved" | "rejected" }): Promise<void>;
 }
 
