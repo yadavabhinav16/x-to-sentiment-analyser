@@ -19,11 +19,14 @@ function tw(text: string): RawTweet {
 describe("analyzeLexical", () => {
   it("finds repeated bigrams as signature phrases", () => {
     const tweets = Array.from({ length: 10 }, (_, i) =>
-      tw(`the future is now, day ${i}. the future looks bright`)
+      tw(`the future looks bright today, day ${i}. bright future ahead always`)
     );
     const l = analyzeLexical(tweets);
     expect(l.signaturePhrases.length).toBeGreaterThan(0);
-    expect(l.signaturePhrases).toContain("the future");
+    expect(l.signaturePhrases).toContain("future looks");
+    // filler bigrams (function words both sides) are never signature phrases
+    expect(l.signaturePhrases).not.toContain("the future");
+    expect(l.signaturePhrases).not.toContain("is a");
   });
 
   it("computes vocab richness between 0 and 1", () => {
