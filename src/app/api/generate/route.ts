@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { generationJobs } from "@/db/schema";
 import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
-import { getLlmClient } from "@/modules/llm/openrouter";
+import { getLlmClient, OpenRouterClient } from "@/modules/llm/openrouter";
 import { LlmRouter } from "@/modules/llm/router";
 import { moderateDraft } from "@/modules/voice/moderation";
 import { generateDrafts, MissingKeyError } from "@/modules/voice/generation-service";
@@ -85,9 +85,13 @@ export async function POST(req: NextRequest) {
     }).run();
 
     try {
-      // Route through provider-failover router (single provider today; more via env later).
+      // Route through provider-failover router: primary + fallback free models,
+      // each with its own circuit breaker. Chain order from bake-off (Sep 2026):
+      // nex-n2.5-pro 3/3 valid @ 11-14s; nemotron-3-ultra 2/3; dots-3-note 1/3.
       const router = new LlmRouter([
-        { name: "openrouter", client, priority: 1 },
+        { name: "nex-n2.5-pro", client: new OpenRouterClient(process.env.OPENROUTER_API_KEY!, "nex-agi/nex-n2.5-pro:free"), priority: 1 },
+        { name: "nemotron-3-ultra", client: new OpenRouterClient(process.env.OPENROUTER_API_KEY!, "nvidia/nemotron-3-ultra-550b-a55b:free"), priority: 2 },
+        { name: "dots-3-note", client: new OpenRouterClient(process.env.OPENROUTER_API_KEY!, "dots-studio/dots-3-note-preview:free"), priority: 3 },
       ]);
       const outcome = await generateDrafts(router, profile, corpus, count, body.topic);
       const moderated = outcome.drafts.filter((d) => moderateDraft(d.text).allowed);

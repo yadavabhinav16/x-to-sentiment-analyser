@@ -32,11 +32,16 @@ vi.mock("@/modules/auth/auth", () => ({
 vi.mock("next-auth", () => ({ default: () => ({}) }));
 
 // 3. Mock the LLM client — NO live OpenRouter calls.
+// generate/route.ts now constructs OpenRouterClient instances directly for the
+// router chain, so mock the class as well as the factory.
 vi.mock("@/modules/llm/openrouter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/llm/openrouter")>();
   return {
     ...actual,
     getLlmClient: () => fakeLlmClient(),
+    OpenRouterClient: class {
+      complete = async () => fakeLlmClient().complete();
+    },
   };
 });
 

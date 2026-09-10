@@ -32,15 +32,30 @@ export async function generateDrafts(
   const user = buildDraftRequestPrompt(profile, count, topicNudge);
 
   logger.info("Generation started", { jobId, handle: profile.handle, count });
-  const result = await client.complete(
-    [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    { jsonMode: true, maxTokens: 2000 }
-  );
+  const messages = [
+    { role: "system" as const, content: system },
+    { role: "user" as const, content: user },
+  ];
 
-  const parsed = extractJson(result.content) as { drafts?: unknown };
+  // Retry on malformed LLM output: free models intermittently return empty or
+  // truncated bodies even in JSON mode (observed ~1/3 on some models). The
+  // router handles provider-level failover; this handles transient bad output.
+  let result;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      result = await client.complete(messages, { jsonMode: true, maxTokens: 4000 });
+      extractJson(result.content) as { drafts?: unknown }; // validate parsability
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 3) throw err;
+      logger.warn("Generation attempt failed; retrying", { jobId, attempt, error: String(err) });
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+
+  const parsed = extractJson(result!.content) as { drafts?: unknown };
   const texts = Array.isArray(parsed.drafts) ? parsed.drafts : [];
   if (!texts.length) throw new Error("LLM returned no drafts");
 
@@ -55,8 +70,8 @@ export async function generateDrafts(
   logger.info("Generation complete", {
     jobId,
     drafts: drafts.length,
-    tokensIn: result.tokensIn,
-    tokensOut: result.tokensOut,
+    tokensIn: result!.tokensIn,
+    tokensOut: result!.tokensOut,
   });
-  return { drafts, jobId, tokensIn: result.tokensIn, tokensOut: result.tokensOut };
+  return { drafts, jobId, tokensIn: result!.tokensIn, tokensOut: result!.tokensOut };
 }
