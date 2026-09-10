@@ -4,6 +4,7 @@ import type { RawTweet } from "../ingestion/ports/tweet-source";
 import { buildSystemPrompt, buildDraftRequestPrompt, selectExemplars } from "./prompt-builder";
 import { extractJson, type LlmClient } from "../llm/openrouter";
 import { evaluateDraft } from "../analysis/evaluate";
+import { checkCoherence, scoreStyleDeviation } from "../analysis/coherence";
 import { logger } from "../../lib/logger";
 
 export interface GenerationOutcome {
@@ -59,13 +60,26 @@ export async function generateDrafts(
   const texts = Array.isArray(parsed.drafts) ? parsed.drafts : [];
   if (!texts.length) throw new Error("LLM returned no drafts");
 
+  // Quality gate: structural coherence first (drops broken model output),
+  // then blended style score: original profile gate + distribution-aware
+  // deviation scoring. Combined = mean of the two, floored at 0.
   const drafts = texts
     .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim())
+    .filter((t) => {
+      const coh = checkCoherence(t);
+      if (!coh.coherent) {
+        logger.warn("Draft failed coherence check; dropping", { jobId, flags: coh.flags });
+        return false;
+      }
+      return true;
+    })
     .slice(0, count)
-    .map((text) => ({
-      text: text.trim(),
-      styleMatch: evaluateDraft(text.trim(), profile).score,
-    }));
+    .map((text) => {
+      const gate = evaluateDraft(text, profile).score;
+      const dev = scoreStyleDeviation(text, profile).score;
+      return { text, styleMatch: Math.round((gate + dev) / 2) };
+    });
 
   logger.info("Generation complete", {
     jobId,

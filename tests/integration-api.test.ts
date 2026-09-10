@@ -50,7 +50,7 @@ function fakeLlmClient() {
     complete: async () => ({
       content: JSON.stringify({
         drafts: [
-          "just shipped a new build and the tests are green — small wins compound",
+          "just shipped a new build and the tests are green. small wins compound.",
           "coffee count today: 3. deploy count: also 3. coincidence? definitely not",
         ],
       }),
