@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
-import { getDb } from "@/db";
-import { generationJobs } from "@/db/schema";
-import { getProfileByHandle, getCorpus, createDrafts } from "@/modules/drafts/service";
-import { getLlmClient } from "@/modules/llm/openrouter";
-import { buildLlmRouter } from "@/modules/llm/router";
-import { runShadowValidation } from "@/modules/llm/shadow-validator";
-import { moderateDraft } from "@/modules/voice/moderation";
-import { generateDrafts, MissingKeyError } from "@/modules/voice/generation-service";
+import { getProfileByHandle, getCorpus } from "@/modules/drafts/service";
+import { runGenerationForProfile } from "@/modules/voice/generation-orchestrator";
+import { MissingKeyError } from "@/modules/voice/generation-service";
 import { styleProfileSchema } from "@/modules/analysis/style-profile";
 import { logger } from "@/lib/logger";
 import { requireUser, unauthorized } from "@/lib/require-user";
@@ -53,89 +46,25 @@ export async function POST(req: NextRequest) {
       impressionCount: t.impressions,
     }));
 
-    const client = getLlmClient();
-    if (!client) {
-      const jobId = randomUUID();
-      await getDb().insert(generationJobs).values({
-        id: jobId,
-        userId: user.id,
-        voiceProfileId: profileRow.id,
-        status: "failed",
-        error: "OPENROUTER_API_KEY missing",
-        count,
-        createdAt: new Date(),
-      });
-      return NextResponse.json(
-        {
-          error:
-            "Generation unavailable: OPENROUTER_API_KEY is not configured. Add it to .env and restart.",
-          jobId,
-        },
-        { status: 503 }
-      );
-    }
-
-    const job = { id: randomUUID(), status: "running" as const };
-    await getDb().insert(generationJobs).values({
-      id: job.id,
-      userId: user.id,
-      voiceProfileId: profileRow.id,
-      status: "running",
-      count,
-      createdAt: new Date(),
-    });
-
     try {
-      // Route through provider-failover router: primary + fallback free models,
-      // each with its own circuit breaker. Chain order from bake-off (Sep 2026):
-      // nex-n2.5-pro 3/3 valid @ 11-14s; nemotron-3-ultra 2/3; dots-3-note 1/3.
-      const router = buildLlmRouter(process.env.OPENROUTER_API_KEY!);
-      const outcome = await generateDrafts(router, profile, corpus, count, body.topic);
-
-      // Shadow validation ("LLM madness validator"): an independent secondary
-      // model answers Yes/No whether the primary's output was on-topic and
-      // coherent. Non-blocking: failure degrades to 'unknown', never an error.
-      const shadow = await runShadowValidation(
-        router.getProviders(),
+      const result = await runGenerationForProfile(
+        user.id,
+        profileRow.id,
+        profile,
+        corpus,
+        count,
         body.topic
-          ? `Write ${count} short tweets in this person's voice about: ${body.topic}`
-          : `Write ${count} short tweets in this person's natural voice`,
-        outcome.drafts.map((d) => d.text),
-        outcome.provider
       );
-
-      const moderated = outcome.drafts.filter((d) => moderateDraft(d.text).allowed);
-      const blockedCount = outcome.drafts.length - moderated.length;
-      if (blockedCount > 0) {
-        logger.warn("Drafts blocked by moderation", { jobId: job.id, blockedCount });
-      }
-      const rows = moderated.length ? await createDrafts(profileRow.id, job.id, moderated) : [];
-      await getDb()
-        .update(generationJobs)
-        .set({
-          status: "done",
-          shadowVerdict: shadow.verdict,
-          shadowValidator: shadow.validator,
-        })
-        .where(eq(generationJobs.id, job.id));
       return NextResponse.json({
         ok: true,
-        jobId: job.id,
-        count: rows.length,
-        blockedCount,
-        shadowValidation: { verdict: shadow.verdict, validator: shadow.validator },
-        drafts: rows.map((d) => ({
-          id: d.id,
-          text: d.text,
-          styleMatch: d.styleMatch,
-          status: d.status,
-          moderationFlags: d.moderationFlags,
-          moderationLabel: d.moderationLabel,
-        })),
+        jobId: result.jobId,
+        count: result.drafts.length,
+        blockedCount: result.blockedCount,
+        shadowValidation: result.shadowValidation,
+        drafts: result.drafts,
       });
     } catch (err) {
       if (err instanceof MissingKeyError) throw err;
-      await getDb().update(generationJobs).set({ status: "failed", error: String(err) }).where(eq(generationJobs.id, job.id));
       throw err;
     }
   } catch (err) {

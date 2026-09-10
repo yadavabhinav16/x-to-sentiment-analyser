@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/modules/auth/auth";
-import { getDb } from "@/db";
-import { users, voiceProfiles } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { getUserById } from "@/modules/auth/users";
+import { getProfileById } from "@/modules/drafts/service";
 
 export interface SessionUser {
   id: string;
@@ -18,10 +17,9 @@ export async function requireUser(): Promise<SessionUser | null> {
   const session = await auth();
   const id = session?.user?.id;
   if (!id) return null;
-  const rows = await getDb().select().from(users).where(eq(users.id, id)).limit(1);
-  const row = rows[0];
-  if (!row) return null;
-  return { id: row.id, email: row.email ?? session.user?.email ?? "", name: row.name };
+  const user = await getUserById(id);
+  if (!user) return null;
+  return { id: user.id, email: user.email ?? session.user?.email ?? "", name: user.name };
 }
 
 export function unauthorized() {
@@ -30,12 +28,7 @@ export function unauthorized() {
 
 /** Fetch a voice profile scoped to the given user, or null. */
 export async function getProfileForUser(profileId: string, userId: string) {
-  const rows = await getDb()
-    .select()
-    .from(voiceProfiles)
-    .where(eq(voiceProfiles.id, profileId))
-    .limit(1);
-  return rows[0] ?? null;
+  return (await getProfileById(profileId, userId)) ?? null;
 }
 
 export function assertProfileOwnership(profile: { userId: string | null } | undefined, userId: string): boolean {
