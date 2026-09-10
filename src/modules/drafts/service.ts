@@ -52,6 +52,7 @@ export async function createDrafts(
       styleMatch: it.styleMatch,
       moderationFlags: mod.flags,
       moderationLabel: mod.label,
+      editedText: null,
       createdAt: now,
     } as Draft;
   });
