@@ -21,6 +21,12 @@ export default async function Dashboard() {
         >
           New profile
         </a>
+        <a
+          href="/demo"
+          className="ml-2 rounded-lg border border-blue-700 px-4 py-2 text-sm font-medium text-blue-300 hover:border-blue-500 hover:text-blue-200"
+        >
+          ▶ Guided demo
+        </a>
         <span className="ml-3 text-sm text-neutral-500">{user.email}</span>
         <form
           action={async () => {
