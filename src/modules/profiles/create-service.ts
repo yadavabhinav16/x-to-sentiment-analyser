@@ -1,13 +1,14 @@
 import { randomUUID } from "crypto";
 import type { TweetSource } from "../ingestion/ports/tweet-source";
 import { analyzeCorpus } from "../analysis/analyzer";
-import { voiceProfileRepository, tweetRepository } from "../../repositories";
+import { voiceProfileRepository } from "../../repositories";
 import { logger } from "../../lib/logger";
-import { getProfileByHandle } from "../drafts/service";
 
 /**
- * Profile creation service. Persists via the VoiceProfileRepository and
- * TweetRepository interfaces — no direct DB access in this module.
+ * Profile creation service. Persistence goes through the
+ * VoiceProfileRepository interface; the upsert (corpus replace + profile
+ * write) is atomic — one transaction via upsertWithCorpus(). A crash
+ * mid-pipeline can never leave a stale profile/corpus pair.
  */
 export async function createProfileFromHandle(
   handle: string,
@@ -26,22 +27,9 @@ export async function createProfileFromHandle(
 
   const profile = await analyzeCorpus(clean, user.name, raw);
 
-  // Upsert: replace existing profile for this handle (scoped to this user)
-  const existing = await getProfileByHandle(clean, userId);
-  let profileId: string;
-  if (existing) {
-    profileId = existing.id;
-    await tweetRepository.deleteByProfile(profileId);
-    await voiceProfileRepository.update(profileId, {
-      styleProfile: JSON.stringify(profile),
-      sampleCount: raw.length,
-      displayName: user.name,
-      corpusFetchedAt: new Date(),
-    });
-  } else {
-    profileId = randomUUID();
-    await voiceProfileRepository.insert({
-      id: profileId,
+  const profileId = await voiceProfileRepository.upsertWithCorpus({
+    profile: {
+      id: randomUUID(),
       userId: userId ?? null,
       handle: clean,
       displayName: user.name,
@@ -49,22 +37,26 @@ export async function createProfileFromHandle(
       sampleCount: raw.length,
       corpusFetchedAt: new Date(),
       createdAt: new Date(),
-    });
-  }
-
-  await tweetRepository.insertMany(
-    raw.map((t) => ({
-      id: `${profileId}:${t.id}`,
-      voiceProfileId: profileId,
-      text: t.text,
-      postedAt: t.createdAt,
-      likes: t.likeCount,
-      rts: t.retweetCount,
-      replies: t.replyCount,
-      impressions: t.impressionCount,
-      source: "mock_x_api",
-    }))
-  );
+    },
+    patch: {
+      styleProfile: JSON.stringify(profile),
+      sampleCount: raw.length,
+      displayName: user.name,
+      corpusFetchedAt: new Date(),
+    },
+    buildTweets: (pid) =>
+      raw.map((t) => ({
+        id: `${pid}:${t.id}`,
+        voiceProfileId: pid,
+        text: t.text,
+        postedAt: t.createdAt,
+        likes: t.likeCount,
+        rts: t.retweetCount,
+        replies: t.replyCount,
+        impressions: t.impressionCount,
+        source: "mock_x_api",
+      })),
+  });
 
   logger.info("Profile created", { handle: clean, profileId, sampleCount: raw.length });
   return { profileId, sampleCount: raw.length };

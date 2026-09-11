@@ -13,6 +13,18 @@ export interface UserRepository {
   insert(user: Omit<User, "createdAt"> & { createdAt?: Date }): Promise<User>;
 }
 
+export interface ProfileUpsertPayload {
+  profile: Omit<VoiceProfile, "createdAt"> & { createdAt?: Date };
+  /**
+   * Corpus rows replacing any previous tweets for this profile. The mapper
+   * receives the resolved profile id (existing profile keeps its id) so rows
+   * can embed it in primary keys before the batch executes.
+   */
+  buildTweets: (profileId: string) => Tweet[];
+  /** Style profile + sample metadata written together with the corpus. */
+  patch: Partial<VoiceProfile>;
+}
+
 export interface VoiceProfileRepository {
   /** Case-insensitive lookup scoped to a user (or all users when userId is undefined). */
   findByHandle(handle: string, userId?: string): Promise<VoiceProfile | undefined>;
@@ -20,6 +32,12 @@ export interface VoiceProfileRepository {
   listByUser(userId: string): Promise<VoiceProfile[]>;
   insert(profile: Omit<VoiceProfile, "createdAt"> & { createdAt?: Date }): Promise<void>;
   update(id: string, patch: Partial<VoiceProfile>): Promise<void>;
+  /**
+   * Atomic profile upsert: replaces the corpus and writes the profile in ONE
+   * transaction (db.batch on Neon HTTP). A crash mid-pipeline can never leave
+   * a profile with a stale style_profile and no corpus.
+   */
+  upsertWithCorpus(payload: ProfileUpsertPayload): Promise<string>;
 }
 
 export interface TweetRepository {

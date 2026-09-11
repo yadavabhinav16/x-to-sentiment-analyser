@@ -177,6 +177,21 @@ export function makeDbMock(state: FakeDbState) {
       insert: (t: object | string) => target(tableNameOf(t)).insert(),
       update: (t: object | string) => target(tableNameOf(t)).update(),
       delete: (t: object | string) => target(tableNameOf(t)).delete(),
+      /**
+       * Batch of pre-built Drizzle query builders (as passed to db.batch()).
+       * Each entry is one of the thenable/async objects produced by
+       * insert/update/delete above; executing them in sequence matches the
+       * real driver's semantics closely enough for tests (the real Neon HTTP
+       * driver wraps a batch in one non-interactive transaction; we don't
+       * model rollback because the fakes' operations can't fail halfway).
+       */
+      batch: async (queries: unknown[]) => {
+        const results: unknown[] = [];
+        for (const q of queries) {
+          results.push(await q);
+        }
+        return results;
+      },
     }),
   };
 }

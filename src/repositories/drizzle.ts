@@ -18,6 +18,7 @@ import type {
   DraftRepository,
   GenerationJobRepository,
   IdempotencyRepository,
+  ProfileUpsertPayload,
   TweetRepository,
   UserRepository,
   VoiceProfileRepository,
@@ -95,6 +96,48 @@ export class DrizzleVoiceProfileRepository implements VoiceProfileRepository {
   async update(id: string, patch: Partial<VoiceProfile>): Promise<void> {
     await getDb().update(voiceProfiles).set(patch).where(eq(voiceProfiles.id, id));
   }
+
+  /**
+   * Atomic profile upsert: corpus delete + profile write + corpus insert in
+   * ONE db.batch() — a single non-interactive transaction on Neon HTTP. A
+   * crash mid-pipeline can never leave a profile with a stale style_profile
+   * and no corpus (or a corpus with no profile).
+   */
+  async upsertWithCorpus(payload: ProfileUpsertPayload): Promise<string> {
+    const db = getDb();
+    const existing = await this.findByHandle(
+      payload.profile.handle,
+      payload.profile.userId ?? undefined
+    );
+    const profileId = existing?.id ?? payload.profile.id;
+    const full = { createdAt: new Date(), ...payload.profile } as VoiceProfile;
+    const tweetRows = payload.buildTweets(profileId);
+
+    if (existing) {
+      await db.batch([
+        db.delete(tweets).where(eq(tweets.voiceProfileId, profileId)),
+        db.update(voiceProfiles).set(payload.patch).where(eq(voiceProfiles.id, profileId)),
+        ...chunkRows(tweetRows, 100).map((chunk) =>
+          db.insert(tweets).values(chunk)
+        ),
+      ] as any);
+    } else {
+      await db.batch([
+        db.insert(voiceProfiles).values(full),
+        ...chunkRows(tweetRows, 100).map((chunk) =>
+          db.insert(tweets).values(chunk)
+        ),
+      ] as any);
+    }
+    return profileId;
+  }
+}
+
+/** Neon HTTP batches have a per-request size limit; split large corpora. */
+function chunkRows<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
 }
 
 export class DrizzleTweetRepository implements TweetRepository {
