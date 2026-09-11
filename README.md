@@ -59,7 +59,7 @@ POST /api/generate
 
 ---
 
-## Good decisions, and the reasoning behind each
+## Design decisions, and the reasoning behind each
 
 ### 1. Layered architecture with interface/implementation split
 
@@ -85,7 +85,7 @@ circuit breaker, metrics, env). Services never import Next.js.
 ### 3. Ports & adapters at every volatile boundary
 
 - `TweetSource` port → `MockTweetSource` (fixture-backed), `XApiTweetSource`
-  (live, with timeout/retry), paste-parser fallback
+  (live, with timeout/retry)
 - `LlmClient` port → `OpenRouterClient`
 - Cost-bearing paths are server-side-resolved: the client can never trigger
   live X API spend by sending a flag.
