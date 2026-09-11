@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
       case "ingest": {
         const source = new MockTweetSource();
         const started = Date.now();
-        const { profileId, sampleCount } = await createProfileFromHandle(handle, source, 100, user.id);
+        const { profileId, sampleCount } = await createProfileFromHandle(handle, source, 30, user.id);
         return NextResponse.json({
           ok: true,
           stage,

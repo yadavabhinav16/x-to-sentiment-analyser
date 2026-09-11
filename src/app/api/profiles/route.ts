@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       : null;
 
     const run = () =>
-      createProfileFromHandle(handle, source, Math.min(100, body.limit ?? 100), user.id);
+      createProfileFromHandle(handle, source, Math.min(30, body.limit ?? 30), user.id);
 
     const respond = (r: { profileId: string; sampleCount: number }, replayed: boolean) =>
       NextResponse.json({

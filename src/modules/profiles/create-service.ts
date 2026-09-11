@@ -13,7 +13,7 @@ import { logger } from "../../lib/logger";
 export async function createProfileFromHandle(
   handle: string,
   source: { fetchUser(h: string): Promise<{ id: string; username: string; name: string }>; fetchRecentTweets(h: string, limit: number): Promise<Array<{ id: string; text: string; createdAt: string; likeCount: number; retweetCount: number; replyCount: number; quoteCount: number; impressionCount: number | null }>> },
-  limit = 100,
+  limit = 30,
   userId?: string
 ): Promise<{ profileId: string; sampleCount: number }> {
   // Stored normalized (lowercase, no @) so lookups can use plain indexed
