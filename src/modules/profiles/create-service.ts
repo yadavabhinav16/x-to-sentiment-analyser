@@ -15,7 +15,9 @@ export async function createProfileFromHandle(
   limit = 100,
   userId?: string
 ): Promise<{ profileId: string; sampleCount: number }> {
-  const clean = handle.replace(/^@/, "");
+  // Stored normalized (lowercase, no @) so lookups can use plain indexed
+  // eq() — case handling happens once here, at the write boundary.
+  const clean = handle.replace(/^@/, "").trim().toLowerCase();
   logger.info("Profile creation started", { handle: clean, limit });
 
   const user = await source.fetchUser(clean);

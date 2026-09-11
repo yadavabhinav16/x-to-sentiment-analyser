@@ -33,7 +33,9 @@ export async function createUser(email: string, password: string, name?: string)
 }
 
 export async function authenticate(email: string, password: string): Promise<AuthUser | null> {
-  const user = await findUserByEmail(email);
+  // Case-insensitive: normalize before lookup so User@Example.com and
+  // user@example.com resolve to the same account (matching createUser).
+  const user = await findUserByEmail(email.trim().toLowerCase());
   if (!user?.passwordHash) return null;
   if (!verifyPassword(password, user.passwordHash)) return null;
   return { id: user.id, email: user.email ?? email, name: user.name };

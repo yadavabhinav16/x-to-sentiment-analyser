@@ -83,11 +83,21 @@ export async function generateDrafts(
       return { text, styleMatch: Math.round((gate + dev) / 2) };
     });
 
+  // Quality floor: drafts scoring below 55/100 on the blended style score are
+  // dropped before persistence — the generated set should never include
+  // off-voice material just because it survived coherence checks.
+  const QUALITY_FLOOR = 55;
+  const kept = drafts.filter((d) => d.styleMatch >= QUALITY_FLOOR);
+  const dropped = drafts.length - kept.length;
+  if (dropped > 0) {
+    logger.warn("Drafts dropped below quality floor", { jobId, dropped, floor: QUALITY_FLOOR });
+  }
+
   logger.info("Generation complete", {
     jobId,
-    drafts: drafts.length,
+    drafts: kept.length,
     tokensIn: result!.tokensIn,
     tokensOut: result!.tokensOut,
   });
-  return { drafts, jobId, tokensIn: result!.tokensIn, tokensOut: result!.tokensOut, provider: (result as { provider?: string }).provider ?? "unknown" };
+  return { drafts: kept, jobId, tokensIn: result!.tokensIn, tokensOut: result!.tokensOut, provider: (result as { provider?: string }).provider ?? "unknown" };
 }

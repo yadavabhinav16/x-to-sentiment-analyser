@@ -94,4 +94,13 @@ export const MIGRATIONS: Array<{ id: string; sql: string }> = [
       ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS shadow_validator TEXT;
     `,
   },
+  {
+    id: "2026-09-11-003-lower-email-index",
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uq
+        ON users (lower(email));
+      CREATE INDEX IF NOT EXISTS voice_profiles_handle_lower_idx
+        ON voice_profiles (lower(handle));
+    `,
+  },
 ];
