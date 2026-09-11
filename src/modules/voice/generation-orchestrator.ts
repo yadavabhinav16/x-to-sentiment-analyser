@@ -6,6 +6,7 @@ import { moderateDraft } from "./moderation";
 import { generateDrafts, MissingKeyError } from "./generation-service";
 import { runShadowValidation } from "../llm/shadow-validator";
 import { buildLlmRouter, LlmRouter } from "../llm/router";
+import { recordSpend } from "../llm/token-ledger";
 import { createDrafts } from "../drafts/service";
 import { logger } from "../../lib/logger";
 
@@ -56,6 +57,15 @@ export async function runGenerationForProfile(
     // each with its own circuit breaker.
     const router = buildLlmRouter(process.env.OPENROUTER_API_KEY ?? "");
     const outcome = await generateDrafts(router, profile, corpus, count, topic);
+
+    // Token ledger: durable per-user spend record (survives cold starts,
+    // unlike in-process metrics). Best-effort — never fails the request.
+    await recordSpend({
+      userId,
+      provider: outcome.provider,
+      tokensIn: outcome.tokensIn,
+      tokensOut: outcome.tokensOut,
+    });
 
     // Shadow validation ("LLM madness validator"): an independent secondary
     // model answers Yes/No whether the primary's output was on-topic and

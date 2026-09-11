@@ -6,6 +6,7 @@ import { styleProfileSchema } from "@/modules/analysis/style-profile";
 import { logger } from "@/lib/logger";
 import { requireUser, unauthorized } from "@/lib/require-user";
 import { rateLimit } from "@/lib/rate-limit";
+import { assertWithinBudget, KillSwitchError, BudgetExceededError } from "@/modules/llm/token-ledger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -25,6 +26,24 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as { handle?: string; count?: number; topic?: string };
     const count = Math.min(8, Math.max(1, body.count ?? 5));
+
+    // FinOps gate: kill switch + per-user token budget checked BEFORE any
+    // paid call (this route's LLM calls all bill tokens).
+    try {
+      await assertWithinBudget(user.id);
+    } catch (err) {
+      if (err instanceof KillSwitchError) {
+        return NextResponse.json({ error: err.message }, { status: 503 });
+      }
+      if (err instanceof BudgetExceededError) {
+        return NextResponse.json(
+          { error: err.message, window: err.window, used: err.used, cap: err.cap },
+          { status: 429, headers: { "Retry-After": "3600" } }
+        );
+      }
+      throw err;
+    }
+
     const profileRow = body.handle
       ? await getProfileByHandle(body.handle, user.id) // scoped to this user
       : undefined;

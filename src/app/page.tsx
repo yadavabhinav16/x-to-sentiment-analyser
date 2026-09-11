@@ -27,6 +27,12 @@ export default async function Dashboard() {
         >
           ▶ Guided demo
         </a>
+        <a
+          href="/analytics"
+          className="ml-2 rounded-lg border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+        >
+          📊 Analytics
+        </a>
         <span className="ml-3 text-sm text-neutral-500">{user.email}</span>
         <form
           action={async () => {

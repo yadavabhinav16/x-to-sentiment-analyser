@@ -7,6 +7,7 @@ import {
   recordSuccess,
   getBreakerState,
 } from "../../lib/circuit-breaker";
+import { inc, observeMs } from "../../lib/metrics";
 
 /**
  * LLM router with provider failover.
@@ -64,14 +65,23 @@ export class LlmRouter {
     for (const provider of this.providers) {
       if (!allowRequest(provider.name)) {
         attempts.push({ provider: provider.name, error: "circuit open" });
+        inc(`llm.breaker.blocked.${provider.name}`);
         continue;
       }
+      const start = Date.now();
       try {
         const result = await provider.client.complete(messages, opts);
         recordSuccess(provider.name);
+        observeMs(`llm.provider.${provider.name}.ms`, Date.now() - start);
+        inc(`llm.provider.${provider.name}.ok`);
+        inc(`llm.tokens.in.${provider.name}`, result.tokensIn ?? 0);
+        inc(`llm.tokens.out.${provider.name}`, result.tokensOut ?? 0);
         return { ...result, provider: provider.name, attempts };
       } catch (err) {
         const { opened } = recordFailure(provider.name);
+        observeMs(`llm.provider.${provider.name}.ms`, Date.now() - start);
+        inc(`llm.provider.${provider.name}.fail`);
+        if (opened) inc(`llm.breaker.opened.${provider.name}`);
         attempts.push({ provider: provider.name, error: String(err) });
         logger.warn("LLM provider failed; failing over", {
           provider: provider.name,

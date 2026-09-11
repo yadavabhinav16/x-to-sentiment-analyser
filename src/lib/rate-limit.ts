@@ -31,6 +31,14 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
   }
   if (entry.count >= limit) {
     const retryAfterSec = Math.ceil((entry.windowStart + windowMs - now) / 1000);
+    // Observability: count rejections by limiter family (key prefix before ':').
+    try {
+      // Lazy import avoids a cycle (metrics has no deps).
+      const { inc } = require("./metrics") as typeof import("./metrics");
+      inc(`ratelimit.rejected.${key.split(":")[0] ?? "unknown"}`);
+    } catch {
+      /* metrics optional */
+    }
     return { allowed: false, remaining: 0, retryAfterSec };
   }
   entry.count += 1;
