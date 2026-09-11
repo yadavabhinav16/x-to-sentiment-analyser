@@ -57,24 +57,36 @@ function rawExec(): ((q: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }>
 /**
  * Check the user's spend against hourly/daily caps. Throws
  * BudgetExceededError when over. Called BEFORE the paid call.
- * On a fake/test DB without raw SQL support this degrades to "within budget".
+ *
+ * Fail-open policy: if the ledger itself is unavailable (missing table, DB
+ * hiccup) the check logs and ALLOWS the call — an observability/FinOps guard
+ * must never take down the core generate feature. The only hard gate is the
+ * explicit kill switch.
  */
 export async function assertWithinBudget(userId: string): Promise<void> {
   if (killSwitchActive()) throw new KillSwitchError();
-  const exec = rawExec();
-  if (!exec) return; // test fake path — no enforcement possible
-  const { hourly, daily } = caps();
-  const rows = await exec(sql`
-    SELECT
-      COALESCE(SUM(CASE WHEN created_at > now() - interval '1 hour' THEN tokens_in + tokens_out ELSE 0 END), 0) AS used_hour,
-      COALESCE(SUM(CASE WHEN created_at > now() - interval '24 hours' THEN tokens_in + tokens_out ELSE 0 END), 0) AS used_day
-    FROM token_ledger
-    WHERE user_id = ${userId}
-  `);
-  const usedHour = Number((rows.rows[0] as { used_hour: number })?.used_hour ?? 0);
-  const usedDay = Number((rows.rows[0] as { used_day: number })?.used_day ?? 0);
-  if (usedHour >= hourly) throw new BudgetExceededError("hourly", usedHour, hourly);
-  if (usedDay >= daily) throw new BudgetExceededError("daily", usedDay, daily);
+  try {
+    const exec = rawExec();
+    if (!exec) return; // test fake path — no enforcement possible
+    const { hourly, daily } = caps();
+    const rows = await exec(sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN created_at > now() - interval '1 hour' THEN tokens_in + tokens_out ELSE 0 END), 0) AS used_hour,
+        COALESCE(SUM(CASE WHEN created_at > now() - interval '24 hours' THEN tokens_in + tokens_out ELSE 0 END), 0) AS used_day
+      FROM token_ledger
+      WHERE user_id = ${userId}
+    `);
+    const usedHour = Number((rows.rows[0] as { used_hour: number })?.used_hour ?? 0);
+    const usedDay = Number((rows.rows[0] as { used_day: number })?.used_day ?? 0);
+    if (usedHour >= hourly) throw new BudgetExceededError("hourly", usedHour, hourly);
+    if (usedDay >= daily) throw new BudgetExceededError("daily", usedDay, daily);
+  } catch (err) {
+    if (err instanceof BudgetExceededError || err instanceof KillSwitchError) throw err;
+    logger.error("Token budget check failed; allowing generation (fail-open)", {
+      userId,
+      error: String(err),
+    });
+  }
 }
 
 /** Record a completed LLM call. Never throws — ledger failures don't break generation. */
